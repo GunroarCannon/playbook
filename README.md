@@ -1,5 +1,7 @@
 # Playbook: a what-if workbench that remembers you
 
+**Live:** https://playbook-nu-six.vercel.app (pick any username + passcode; no email)
+
 Playbook is a chatbot that runs simulations with you. You describe a real problem (a popsicle-stick bridge for a school contest, a checkout line that melts down at lunch, a solar setup that dies at 2 a.m.), and Playbook sets the dials on a hand-drawn workbench, runs the test, and explains what happened.
 
 It uses **[Walrus Memory](https://github.com/MystenLabs/MemWal)** to remember each person across sessions and devices:
