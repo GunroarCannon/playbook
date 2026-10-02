@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- graph-paper tile -->
+  <rect x="2" y="2" width="60" height="60" rx="10" fill="#fbfaf6" stroke="#1d1f24" stroke-width="3"/>
+  <g stroke="#23336b" stroke-opacity="0.18" stroke-width="1">
+    <path d="M14 4V60M26 4V60M38 4V60M50 4V60M4 14H60M4 26H60M4 38H60M4 50H60"/>
+  </g>
+  <!-- gear behind -->
+  <g transform="translate(44 20)" fill="#fbfaf6" stroke="#23336b" stroke-width="2.6" stroke-linejoin="round">
+    <path d="M-2.5 -12h5l1 3.4 3.2 1.4 3.1-1.8 3.5 3.5-1.8 3.1 1.4 3.2 3.4 1v5l-3.4 1-1.4 3.2 1.8 3.1-3.5 3.5-3.1-1.8-3.2 1.4-1 3.4h-5l-1-3.4-3.2-1.4-3.1 1.8-3.5-3.5 1.8-3.1-1.4-3.2-3.4-1v-5l3.4-1 1.4-3.2-1.8-3.1 3.5-3.5 3.1 1.8 3.2-1.4z"/>
+    <circle r="3.6"/>
+  </g>
+  <!-- flask -->
+  <g stroke="#1d1f24" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 31 L18 41 L8 56 Q7 58.5 10 58.5 H38 Q41 58.5 40 56 L30 41 L30 31" fill="#fbfaf6"/>
+    <path d="M11.5 51 Q24 47 36.5 51 L40 56 Q41 58.5 38 58.5 H10 Q7 58.5 8 56 Z" fill="#d9381e" stroke-width="2.4"/>
+    <path d="M15 31 H33"/>
+  </g>
+  <circle cx="20" cy="54" r="1.6" fill="#fbfaf6"/>
+  <circle cx="28" cy="52.5" r="1.1" fill="#fbfaf6"/>
+</svg>
