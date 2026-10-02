@@ -189,6 +189,27 @@ body {
   animation: pb-pulse 1.2s ease-in-out infinite;
 }
 
+/* Run button: an occasional squash, hop and wiggle to invite a press */
+@keyframes pb-jiggle {
+  0% { transform: none; }
+  12% { transform: scale(1.07, 0.9); }
+  32% { transform: translateY(-9px) scale(0.95, 1.06) rotate(-5deg); }
+  50% { transform: translateY(0) scale(1.05, 0.94) rotate(4deg); }
+  64% { transform: translateY(-3px) rotate(-3deg); }
+  78% { transform: rotate(2deg); }
+  90% { transform: rotate(-1deg); }
+  100% { transform: none; }
+}
+.pb-jiggle {
+  transform-origin: 50% 90%;
+  animation: pb-jiggle 0.75s cubic-bezier(0.3, 0.7, 0.4, 1) 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pb-jiggle {
+    animation: none;
+  }
+}
+
 @keyframes pb-draw {
   from {
     stroke-dashoffset: var(--len, 400);

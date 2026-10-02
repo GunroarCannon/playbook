@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import type { ParamSpec, ParamValue } from "@/lib/sims";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -247,10 +247,32 @@ export function Control(props: CommonProps) {
   }
 }
 
-/* ---------------------------------------------------------------- Run button (mushroom push button) */
+/* ---------------------------------------------------------------- Run button (big red arcade button) */
+
+const CAP_TOP = 38; // cap face centre when up
+const CAP_SEAT = 56; // where the cap meets the ring
 
 export function RunButton({ onClick, running, disabled }: { onClick: () => void; running?: boolean; disabled?: boolean }) {
   const [down, setDown] = useState(false);
+  const [jiggle, setJiggle] = useState(false);
+  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  const pressed = down || running;
+  const sink = pressed ? 9 : 0;
+
+  // Every so often the button bounces and wiggles to invite a press.
+  useEffect(() => {
+    if (running || disabled) return;
+    let t: ReturnType<typeof setTimeout>;
+    const queue = () => {
+      t = setTimeout(() => {
+        setJiggle(true);
+        queue();
+      }, 6000 + Math.random() * 7000);
+    };
+    queue();
+    return () => clearTimeout(t);
+  }, [running, disabled]);
+
   return (
     <button
       type="button"
@@ -259,18 +281,64 @@ export function RunButton({ onClick, running, disabled }: { onClick: () => void;
       onPointerDown={() => setDown(true)}
       onPointerUp={() => setDown(false)}
       onPointerLeave={() => setDown(false)}
-      className="flex flex-col items-center gap-0.5 select-none disabled:opacity-50"
+      className="group flex flex-col items-center gap-1 select-none outline-none disabled:opacity-50 disabled:cursor-not-allowed focus-visible:[&_.pb-tag]:ring-2 focus-visible:[&_.pb-tag]:ring-[var(--red)]"
       aria-label="Run stress test"
     >
-      <svg viewBox="0 0 100 70" className="w-[92px] h-[64px] text-ink">
+      <svg
+        viewBox="0 0 120 92"
+        className={`w-[104px] h-[80px] text-ink overflow-visible ${jiggle && !pressed ? "pb-jiggle" : ""}`}
+        onAnimationEnd={() => setJiggle(false)}
+      >
+        <defs>
+          <radialGradient id={`${uid}-face`} cx="38%" cy="30%" r="80%">
+            <stop offset="0" stopColor="#ff6a55" />
+            <stop offset="0.45" stopColor="#ee2b1f" />
+            <stop offset="1" stopColor="#c4170f" />
+          </radialGradient>
+          <linearGradient id={`${uid}-side`} x1="0" x2="1">
+            <stop offset="0" stopColor="#7a0c07" />
+            <stop offset="0.25" stopColor="#c81d14" />
+            <stop offset="0.45" stopColor="#d9281d" />
+            <stop offset="1" stopColor="#6a0904" />
+          </linearGradient>
+          <linearGradient id={`${uid}-ring`} x1="0" x2="1">
+            <stop offset="0" stopColor="#2e3035" />
+            <stop offset="0.35" stopColor="#5b5f66" />
+            <stop offset="1" stopColor="#25272b" />
+          </linearGradient>
+          <linearGradient id={`${uid}-rim`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#a4a8ae" />
+            <stop offset="1" stopColor="#6c7077" />
+          </linearGradient>
+        </defs>
         <g stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="14" y="48" width="72" height="16" rx="3" fill="url(#pb-hatch)" strokeWidth="1.5" />
-          <rect x="30" y={down || running ? 40 : 34} width="40" height={down || running ? 9 : 15} fill="var(--sheet)" strokeWidth="1.5" />
-          <ellipse cx="50" cy={down || running ? 40 : 33} rx="34" ry="11" fill="var(--red)" strokeWidth="1.6" />
-          <path d={`M28 ${down || running ? 37 : 30} Q40 ${down || running ? 33 : 26} 56 ${down || running ? 33 : 26}`} stroke="white" strokeWidth="2" opacity="0.6" fill="none" />
+          {/* cast shadow */}
+          <ellipse cx="63" cy="84" rx="54" ry="7" fill="currentColor" opacity="0.12" stroke="none" />
+          {/* grey ring base */}
+          <path d="M8 60 L8 70 A52 15 0 0 0 112 70 L112 60 Z" fill={`url(#${uid}-ring)`} strokeWidth="1.6" />
+          <ellipse cx="60" cy="60" rx="52" ry="15" fill={`url(#${uid}-rim)`} strokeWidth="1.6" />
+          <ellipse cx="60" cy={CAP_SEAT + 1} rx="45" ry="12.5" fill="#1c1d20" strokeWidth="1.2" />
+          {/* red cap: the side band shortens as the face goes down */}
+          <path
+            d={`M16 ${CAP_TOP + sink} L16 ${CAP_SEAT} A44 12.5 0 0 0 104 ${CAP_SEAT} L104 ${CAP_TOP + sink} Z`}
+            fill={`url(#${uid}-side)`}
+            strokeWidth="1.6"
+          />
+          <g style={{ transform: `translateY(${sink}px)`, transition: "transform 90ms ease-out" }}>
+            <ellipse cx="60" cy={CAP_TOP} rx="44" ry="15" fill={`url(#${uid}-face)`} strokeWidth="1.6" />
+            {/* gloss */}
+            <path d="M26 36 Q34 27 54 25.5" stroke="#fff" strokeWidth="3" opacity="0.55" fill="none" />
+            <ellipse cx="72" cy="30" rx="6" ry="2" fill="#fff" stroke="none" opacity="0.3" />
+          </g>
+          {/* status lamp on the ring */}
+          <circle cx="60" cy="78" r="2.3" strokeWidth="1" fill={running ? "var(--amber)" : "var(--green)"} className={running ? "pulse" : ""} />
         </g>
       </svg>
-      <span className={`hand text-[14px] tracking-wide ${running ? "pulse" : ""}`}>{running ? "TESTING…" : "RUN TEST"}</span>
+      <span
+        className={`pb-tag hand text-[13px] tracking-[0.12em] px-2.5 py-[1px] rounded-[3px] border-[1.5px] border-current bg-[var(--sheet)] shadow-[2px_2px_0_currentColor] group-active:translate-x-[1px] group-active:translate-y-[1px] group-active:shadow-[1px_1px_0_currentColor] ${running ? "pulse" : ""}`}
+      >
+        {running ? "TESTING…" : "RUN TEST"}
+      </span>
     </button>
   );
 }
