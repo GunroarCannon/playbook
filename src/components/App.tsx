@@ -1,12 +1,14 @@
 "use client";
 
 import type { UIMessage } from "ai";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SimResult } from "@/lib/protocol";
-import { SIMS, defaultParams, getSim, sanitizeParams, type ParamValue } from "@/lib/sims";
+import { buildSimDoc } from "@/lib/sim-doc";
+import { SIMS, defaultParams, getSim, registerCustomSims, sanitizeParams, type ParamValue, type SimDef } from "@/lib/sims";
 import ChatPanel, { type ChatApi, type ChatBody } from "./ChatPanel";
-import { Atom, BenchIcon, Compass, Flask, Gear, SetSquare, SketchDefs } from "./Doodles";
+import { Atom, BenchIcon, Compass, Flask, Gear, MagicFlask, SetSquare, SketchDefs } from "./Doodles";
 import { KindChip } from "./MessageParts";
+import Tour from "./Tour";
 import Workbench from "./Workbench";
 
 type ThreadRow = { id: string; title: string; sim_id: string; memory_on: boolean; updated_at: string };
@@ -34,7 +36,40 @@ const SUGGESTIONS: Record<string, string[]> = {
     "Build me a pendulum that ticks every 2 seconds, then try it on Mars.",
     "How much does air drag change a 0.2 kg ball's range?",
   ],
+  outbreak: [
+    "A flu with R0 of 3 hits a town of 50,000 with 2 beds per 1000 people. Do the hospitals cope?",
+    "How many people need to be vaccinated so the hospitals never overflow?",
+    "Is it better to start distancing on day 10 or day 30?",
+  ],
+  braking: [
+    "I drive at 80 km/h on wet roads. Could I stop if a child ran out 40 m ahead?",
+    "How much longer does it take to stop if I'm on my phone?",
+    "What speed is safe on a gravel road with worn tyres?",
+  ],
+  savings: [
+    "I can save ₦60,000 a month and need ₦2.5 million for school fees in 3 years. Will I make it?",
+    "Inflation is 25% and my savings account pays 12%. Should I even bother?",
+    "What if I raise my savings by 10% every year?",
+  ],
+  rocket: [
+    "Science fair: our 2 L bottle rocket must reach 40 m. The pump only does 70 psi.",
+    "How much water should I put in for the highest flight?",
+    "Do fins really matter?",
+  ],
 };
+
+const CUSTOM_SUGGESTIONS = [
+  "Run a test with the default settings and explain what happens.",
+  "Which dial matters most here?",
+  "Can you add another dial to this bench?",
+];
+
+const BUILD_EXAMPLES = [
+  "Rainwater tank for my house: roof size, rainfall, tank size, daily use. Does it run dry in the dry season?",
+  "A generator for my shop: fuel tank, load in watts, hours of NEPA outage. When does it run out?",
+  "Baking bread: dough temperature, yeast amount, proving time. Does it rise enough?",
+  "A ramp for a wheelchair: height, length, push force. Is it too steep?",
+];
 
 function readLS(key: string, fallback: string) {
   try {
@@ -49,6 +84,11 @@ function writeLS(key: string, v: string) {
   } catch {}
 }
 
+/** Keep the current value of every dial that still exists after a bench was rebuilt. */
+function pickKnown(d: Record<string, ParamValue>, params: SimDef["params"]) {
+  return Object.fromEntries(Object.entries(d).filter(([k]) => params.some((p) => p.key === k)));
+}
+
 function dialsFromMessages(simId: string, messages: UIMessage[]) {
   const sim = getSim(simId) ?? SIMS[0];
   let dials = defaultParams(sim.params);
@@ -57,7 +97,7 @@ function dialsFromMessages(simId: string, messages: UIMessage[]) {
     for (const raw of m.parts) {
       const p = raw as { type: string; data?: { preset?: { params?: Record<string, ParamValue> } }; output?: { simId?: string; params?: Record<string, ParamValue> } };
       if (p.type === "data-bootstrap" && p.data?.preset?.params) dials = { ...dials, ...p.data.preset.params };
-      if (p.type === "tool-switch_bench" && p.output?.simId && getSim(p.output.simId)) {
+      if ((p.type === "tool-switch_bench" || p.type === "tool-build_bench") && p.output?.simId && getSim(p.output.simId)) {
         current = p.output.simId;
         dials = defaultParams(getSim(current)!.params);
       }
@@ -84,11 +124,104 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"chat" | "bench">("chat");
   const [drawer, setDrawer] = useState(false);
+  const [customSims, setCustomSims] = useState<SimDef[]>([]);
+  const [codes, setCodes] = useState<Record<string, { code: string; version: number }>>({});
+  const [simBusy, setSimBusy] = useState<string | null>(null);
+  const [tour, setTour] = useState(false);
   const chatApi = useRef<ChatApi | null>(null);
   const pendingTests = useRef<{ text: string; body: ChatBody }[]>([]);
   const booted = useRef(false);
+  const repairs = useRef<Record<string, number>>({});
 
   const sim = getSim(simId) ?? SIMS[0];
+
+  // ---------------------------------------------------------------- AI-built benches
+  const storeCustom = useCallback((s: SimDef, code?: string, version?: number) => {
+    registerCustomSims([s]);
+    setCustomSims((list) => [{ ...s, custom: true }, ...list.filter((x) => x.id !== s.id)]);
+    if (code != null) setCodes((c) => ({ ...c, [s.id]: { code, version: version ?? 1 } }));
+  }, []);
+
+  const loadCustom = useCallback(
+    async (id: string) => {
+      const r = await fetch(`/api/sims/${id}`).then((r) => r.json());
+      if (r.error) throw new Error(r.error);
+      storeCustom(r.sim, r.code, r.version);
+      return r.sim as SimDef;
+    },
+    [storeCustom],
+  );
+
+  // Fetch the code of an AI-built bench the first time it's opened.
+  useEffect(() => {
+    if (!sim.custom || codes[sim.id]) return;
+    const t = setTimeout(() => loadCustom(sim.id).catch((e) => setToast(`Couldn't load that bench: ${e.message}`)), 0);
+    return () => clearTimeout(t);
+  }, [sim, codes, loadCustom]);
+
+  const srcDoc = useMemo(() => {
+    const c = sim.custom ? codes[sim.id] : undefined;
+    return c ? buildSimDoc(c.code, defaultParams(sim.params), window.location.origin) : undefined;
+  }, [sim, codes]);
+
+  /** The browser saw an AI-built bench crash or hang: send the error back to the AI to fix (twice at most). */
+  async function repairSim(id: string, message: string) {
+    const n = repairs.current[id] ?? 0;
+    if (n >= 2) {
+      setToast(`This AI-built bench still has a problem (${message.slice(0, 90)}). Ask Playbook to fix it in the chat.`);
+      return;
+    }
+    repairs.current[id] = n + 1;
+    setSimBusy(`It crashed: “${message.slice(0, 90)}”. The AI is fixing its own code…`);
+    try {
+      const r = await fetch(`/api/sims/${id}/revise`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ error: message }),
+      }).then((r) => r.json());
+      if (r.error) throw new Error(r.error);
+      storeCustom(r.sim, r.code, r.version);
+      setDials((d) => ({ ...defaultParams(r.sim.params), ...pickKnown(d, r.sim.params) }));
+      setToast("Fixed. The AI rewrote the bench after it crashed.");
+    } catch (e) {
+      setToast(`The AI couldn't fix the bench: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setSimBusy(null);
+    }
+  }
+
+  async function benchChanged(id: string) {
+    setSimBusy("Setting up the new bench…");
+    try {
+      const s = await loadCustom(id);
+      setDials((d) => (id === simId ? { ...defaultParams(s.params), ...pickKnown(d, s.params) } : defaultParams(s.params)));
+      setSimId(s.id);
+      setMobileTab("bench");
+    } catch (e) {
+      setToast(`Couldn't load the new bench: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setSimBusy(null);
+    }
+  }
+
+  async function buildBench(request: string) {
+    const r = await fetch("/api/sims", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request, memoryOn }),
+    }).then((r) => r.json());
+    if (r.error) throw new Error(r.error);
+    storeCustom(r.sim, r.code, r.version);
+    await newSheet(r.sim.id);
+    refreshMemories();
+  }
+
+  // ---------------------------------------------------------------- first-run walkthrough
+  useEffect(() => {
+    if (!me || !active || loading || picker || readLS("pb-tour", "") === "done") return;
+    const t = setTimeout(() => setTour(true), 900);
+    return () => clearTimeout(t);
+  }, [me, active, loading, picker]);
 
   // ---------------------------------------------------------------- boot
   useEffect(() => {
@@ -97,8 +230,16 @@ export default function App() {
     setMemoryOn(readLS("pb-memory", "on") === "on");
     setTheme(readLS("pb-theme", "light") === "dark" ? "dark" : "light");
     (async () => {
-      const [meRes, thRes] = await Promise.all([fetch("/api/auth/me").then((r) => r.json()), fetch("/api/threads").then((r) => r.json())]);
+      const [meRes, thRes, simRes] = await Promise.all([
+        fetch("/api/auth/me").then((r) => r.json()),
+        fetch("/api/threads").then((r) => r.json()),
+        fetch("/api/sims")
+          .then((r) => r.json())
+          .catch(() => ({ sims: [] })),
+      ]);
       if (!meRes.user) return location.reload();
+      registerCustomSims(simRes.sims ?? []);
+      setCustomSims(simRes.sims ?? []);
       setMe(meRes);
       setThreads(thRes.threads ?? []);
       if (thRes.threads?.length) await openThread(thRes.threads[0].id);
@@ -260,7 +401,7 @@ export default function App() {
       <SketchDefs />
       {/* top bar */}
       <header className="sheet border-b-[1.5px] border-ink flex items-center gap-3 px-3 h-14 shrink-0 relative z-20">
-        <button className="lg:hidden btn-ink px-2 py-0.5" onClick={() => setDrawer(!drawer)} aria-label="Menu">
+        <button data-tour="menu" className="lg:hidden btn-ink px-2 py-0.5" onClick={() => setDrawer(!drawer)} aria-label="Menu">
           ☰
         </button>
         <div className="flex items-center gap-2">
@@ -277,6 +418,9 @@ export default function App() {
             {me.model}
           </span>
         )}
+        <button onClick={() => setTour(true)} className="hand text-[15px] w-7 h-7 rounded-full border-[1.5px] border-ink hover:bg-note shrink-0" title="How to use Playbook" aria-label="Show the walkthrough">
+          ?
+        </button>
         <MemorySwitch on={memoryOn} onToggle={toggleMemory} mode={me?.memory.mode} />
         <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="btn-ink px-2 py-0.5 text-[13px] hidden sm:block" title="Toggle blueprint mode">
           {theme === "dark" ? "paper" : "blueprint"}
@@ -297,7 +441,7 @@ export default function App() {
           }`}
         >
           <div className="p-3">
-            <button onClick={() => setPicker(true)} className="btn-ink w-full py-1.5 text-[17px]">
+            <button data-tour="new-sheet" onClick={() => setPicker(true)} className="btn-ink w-full py-1.5 text-[17px]">
               + New sheet
             </button>
           </div>
@@ -320,6 +464,7 @@ export default function App() {
           </nav>
 
           <div className="border-t border-dashed border-ink/30 mx-3" />
+          <div data-tour="ledger" className="flex flex-col min-h-0 flex-1">
           <div className="px-3 pt-2 flex items-baseline justify-between">
             <span className="hand text-[13px] text-ink-3 uppercase tracking-wider">Memory ledger</span>
             <button onClick={refreshMemories} className="mono text-[10px] text-ink-3 hover:text-ink" title="refresh">
@@ -346,6 +491,7 @@ export default function App() {
               </li>
             ))}
           </ul>
+          </div>
           <div className="hidden lg:flex justify-around px-3 pb-3 text-navy opacity-50 wobble" aria-hidden>
             <Flask size={34} />
             <Atom size={34} />
@@ -359,7 +505,7 @@ export default function App() {
         <main className="flex-1 min-w-0 flex flex-col lg:flex-row min-h-0">
           <div className="lg:hidden flex border-b border-ink/30 sheet">
             {(["chat", "bench"] as const).map((t) => (
-              <button key={t} onClick={() => setMobileTab(t)} className={`flex-1 hand py-1.5 text-[15px] ${mobileTab === t ? "border-b-[3px] border-navy" : "text-ink-3"}`}>
+              <button key={t} data-tour={t === "bench" ? "bench-tab" : undefined} onClick={() => setMobileTab(t)} className={`flex-1 hand py-1.5 text-[15px] ${mobileTab === t ? "border-b-[3px] border-navy" : "text-ink-3"}`}>
                 {t === "chat" ? "Chat" : "Workbench"}
               </button>
             ))}
@@ -374,13 +520,14 @@ export default function App() {
                 dials={dials}
                 memoryOn={memoryOn}
                 username={me.user.username}
-                suggestions={SUGGESTIONS[simId] ?? []}
+                suggestions={SUGGESTIONS[simId] ?? (sim.custom ? CUSTOM_SUGGESTIONS : [])}
                 registerApi={(api) => {
                   chatApi.current = api;
                   if (api) flushTests();
                 }}
                 onSetDials={applyDials}
                 onSwitchBench={switchBench}
+                onBenchChanged={benchChanged}
                 onMemoryChanged={() => setTimeout(refreshMemories, 600)}
                 onFinished={() => {
                   refreshThreads();
@@ -392,9 +539,15 @@ export default function App() {
             )}
           </div>
           <div className={`flex-1 min-w-0 min-h-0 ${mobileTab === "bench" ? "flex" : "hidden"} lg:flex flex-col`}>
+            {sim.custom && !srcDoc ? (
+              <div className="flex-1 m-3 ink-box bg-sheet flex items-center justify-center hand text-ink-3 pulse">{simBusy ?? "unrolling the AI-built drawing…"}</div>
+            ) : (
             <Workbench
-              key={sim.id}
+              key={`${sim.id}:${codes[sim.id]?.version ?? 0}`}
               sim={sim}
+              srcDoc={srcDoc}
+              busyNote={simBusy}
+              onSimError={sim.custom ? (m) => repairSim(sim.id, m) : undefined}
               dials={dials}
               onDial={onDial}
               onReset={() => setDials(defaultParams(sim.params))}
@@ -403,6 +556,7 @@ export default function App() {
               runSignal={runSignal}
               onResult={onResult}
             />
+            )}
           </div>
         </main>
       </div>
@@ -413,7 +567,17 @@ export default function App() {
         </div>
       )}
 
-      {picker && <BenchPicker onPick={newSheet} onClose={() => setPicker(false)} canClose={threads.length > 0} memoryOn={memoryOn} />}
+      {picker && (
+        <BenchPicker onPick={newSheet} onBuild={buildBench} custom={customSims} onClose={() => setPicker(false)} canClose={threads.length > 0} memoryOn={memoryOn} />
+      )}
+      {tour && (
+        <Tour
+          onClose={() => {
+            writeLS("pb-tour", "done");
+            setTour(false);
+          }}
+        />
+      )}
       {settings && me && <Settings me={me} onClose={() => setSettings(false)} />}
       {loading && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-paper/70 backdrop-blur-[1px]">
@@ -438,6 +602,7 @@ export default function App() {
 function MemorySwitch({ on, onToggle, mode }: { on: boolean; onToggle: () => void; mode?: string }) {
   return (
     <button
+      data-tour="memory"
       onClick={onToggle}
       role="switch"
       aria-checked={on}
@@ -465,33 +630,135 @@ function MemorySwitch({ on, onToggle, mode }: { on: boolean; onToggle: () => voi
   );
 }
 
-function BenchPicker({ onPick, onClose, canClose, memoryOn }: { onPick: (id: string) => void; onClose: () => void; canClose: boolean; memoryOn: boolean }) {
+const BUILD_STAGES = ["Reading your idea…", "Sketching the diagram…", "Wiring up the dials…", "Writing the physics…", "Checking the code compiles…", "Almost there…"];
+
+function BenchPicker({
+  onPick,
+  onBuild,
+  custom,
+  onClose,
+  canClose,
+  memoryOn,
+}: {
+  onPick: (id: string) => void;
+  onBuild: (request: string) => Promise<void>;
+  custom: SimDef[];
+  onClose: () => void;
+  canClose: boolean;
+  memoryOn: boolean;
+}) {
+  const [idea, setIdea] = useState("");
+  const [building, setBuilding] = useState(false);
+  const [stage, setStage] = useState(0);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!building) return;
+    const t = setInterval(() => setStage((s) => Math.min(BUILD_STAGES.length - 1, s + 1)), 6000);
+    return () => clearInterval(t);
+  }, [building]);
+
+  async function build() {
+    if (idea.trim().length < 12 || building) return;
+    setErr(null);
+    setStage(0);
+    setBuilding(true);
+    try {
+      await onBuild(idea.trim());
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBuilding(false);
+    }
+  }
+
+  const card = (s: SimDef) => (
+    <button key={s.id} onClick={() => onPick(s.id)} disabled={building} className="btn-ink text-left p-3 flex gap-3 items-start font-sans disabled:opacity-50">
+      <BenchIcon simId={s.id} size={50} className="text-navy shrink-0 wobble" />
+      <span className="min-w-0">
+        <span className="hand text-[17px] block leading-tight">{s.name}</span>
+        <span className="text-[13px] text-ink-2 font-sans">{s.tagline}</span>
+      </span>
+    </button>
+  );
+
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/25 p-4" onClick={() => canClose && onClose()}>
-      <div className="sheet ink-box w-full max-w-2xl p-5 max-h-full overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between mb-1">
-          <h2 className="hand text-3xl">Pick a workbench</h2>
-          {canClose && (
-            <button onClick={onClose} className="hand text-ink-3 hover:text-ink text-lg">
-              ✕
-            </button>
-          )}
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/25 p-3 sm:p-4" onClick={() => canClose && !building && onClose()}>
+      <div className="sheet ink-box w-full max-w-3xl max-h-[min(90dvh,860px)] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        {/* fixed header */}
+        <div className="px-5 pt-4 pb-3 border-b border-dashed border-ink/30 shrink-0">
+          <div className="flex items-start justify-between">
+            <h2 className="hand text-3xl">Pick a workbench</h2>
+            {canClose && !building && (
+              <button onClick={onClose} className="hand text-ink-3 hover:text-ink text-lg" aria-label="Close">
+                ✕
+              </button>
+            )}
+          </div>
+          <p className="text-ink-2 text-[13.5px]">
+            {memoryOn
+              ? "Memory is ON: I'll recall your limits, best builds and past failures for this bench, and set the dials to your best result."
+              : "Memory is OFF: you'll get a blank bench and a bot that doesn't know you."}
+          </p>
         </div>
-        <p className="text-ink-2 text-[14px] mb-4">
-          {memoryOn
-            ? "Memory is ON: I'll recall your limits, best builds and past failures for this bench, and set the dials to your best result."
-            : "Memory is OFF: you'll get a blank bench and a bot that doesn't know you."}
-        </p>
-        <div className="grid sm:grid-cols-2 gap-3">
-          {SIMS.map((s) => (
-            <button key={s.id} onClick={() => onPick(s.id)} className="btn-ink text-left p-3 flex gap-3 items-start font-sans">
-              <BenchIcon simId={s.id} size={54} className="text-navy shrink-0 wobble" />
-              <span>
-                <span className="hand text-[18px] block">{s.name}</span>
-                <span className="text-[13px] text-ink-2 font-sans">{s.tagline}</span>
-              </span>
-            </button>
-          ))}
+
+        {/* scrolling body */}
+        <div className="overflow-y-auto overscroll-contain flex-1 min-h-0 px-5 py-4 flex flex-col gap-5">
+          {/* AI builder */}
+          <section className="ink-box-soft bg-note/60 p-3 relative">
+            <div className="flex items-center gap-2">
+              <MagicFlask size={30} className="text-navy wobble shrink-0" />
+              <div>
+                <h3 className="hand text-[19px] leading-tight">Invent a new bench with AI</h3>
+                <p className="text-[12.5px] text-ink-2">Describe anything you want to test. The AI writes a working simulation with dials, usually in 15–40 seconds.</p>
+              </div>
+            </div>
+            {building ? (
+              <div className="flex items-center gap-3 py-4 px-1">
+                <Gear size={40} className="text-navy animate-spin [animation-duration:3s] shrink-0" />
+                <div>
+                  <p className="hand text-[17px]">{BUILD_STAGES[stage]}</p>
+                  <p className="text-[12.5px] text-ink-3 italic line-clamp-2">“{idea}”</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                <textarea
+                  value={idea}
+                  onChange={(e) => setIdea(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) build();
+                  }}
+                  rows={2}
+                  placeholder="e.g. A water tank for my house: roof size, rainfall, daily use. Does it run dry?"
+                  className="mt-2 w-full resize-none bg-sheet border-[1.5px] border-ink/40 focus:border-ink rounded-[3px] outline-none text-[14.5px] px-2 py-1.5 placeholder:text-ink-3"
+                />
+                <div className="flex flex-wrap gap-1.5 mt-1.5 items-center">
+                  {BUILD_EXAMPLES.map((ex) => (
+                    <button key={ex} onClick={() => setIdea(ex)} className="text-[12px] px-2 py-0.5 border border-dashed border-ink/40 rounded hover:border-ink hover:bg-sheet text-ink-2 text-left">
+                      {ex.split(":")[0]}
+                    </button>
+                  ))}
+                  <div className="flex-1" />
+                  <button onClick={build} disabled={idea.trim().length < 12} className="btn-ink px-3 py-1 text-[15px] disabled:opacity-40">
+                    ✦ Build it
+                  </button>
+                </div>
+                {err && <p className="text-red text-[12.5px] mt-1.5 mono">{err}</p>}
+              </>
+            )}
+          </section>
+
+          {custom.length > 0 && (
+            <section>
+              <h3 className="hand text-[13px] text-ink-3 uppercase tracking-wider mb-2">Your AI-built benches</h3>
+              <div className="grid sm:grid-cols-2 gap-3">{custom.map(card)}</div>
+            </section>
+          )}
+
+          <section>
+            <h3 className="hand text-[13px] text-ink-3 uppercase tracking-wider mb-2">Hand-built benches</h3>
+            <div className="grid sm:grid-cols-2 gap-3">{SIMS.map(card)}</div>
+          </section>
         </div>
       </div>
     </div>

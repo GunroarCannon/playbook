@@ -14,9 +14,18 @@ import { errorResponse, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { MEMORY_KINDS, memoriesForPrompt, recall, remember, type ParsedMemory } from "@/lib/memory";
 import { systemPrompt } from "@/lib/prompts";
-import { SIMS, getSim, sanitizeParams, type ParamValue } from "@/lib/sims";
+import { sanitizeParams, type ParamValue, type SimDef } from "@/lib/sims";
+import { createCustomSim, reviseCustomSim, userSims } from "@/lib/sims-server";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
+
+/** Turn provider errors into something a person can act on. */
+function friendlyError(e: unknown) {
+  const msg = e instanceof Error ? `${e.message} ${String((e as { lastError?: unknown }).lastError ?? "")}` : String(e);
+  if (/rate limit|rate_limit|too many requests|429/i.test(msg))
+    return "Playbook's AI is busy right now (free-tier rate limit). Wait about 20 seconds and send that again.";
+  return e instanceof Error ? e.message : "Something went wrong";
+}
 
 type Body = {
   id: string;
@@ -42,10 +51,12 @@ export async function POST(req: Request) {
     if (!thread) return Response.json({ error: "Thread not found" }, { status: 404 });
 
     const memoryOn = body.memoryOn ?? thread.memory_on;
-    let simId = getSim(body.simId ?? "")?.id ?? thread.sim_id;
+    let benches = await userSims(user);
+    const find = (id: string | null | undefined) => benches.find((s) => s.id === id);
+    let sim: SimDef = find(body.simId) ?? find(thread.sim_id) ?? benches[0];
+    let simId = sim.id;
     const dials = body.dials ?? {};
     const lastUserText = textOf([...body.messages].reverse().find((m) => m.role === "user"));
-    const sim = getSim(simId)!;
 
     const stream = createUIMessageStream({
       originalMessages: body.messages,
@@ -55,6 +66,7 @@ export async function POST(req: Request) {
         // A reply to an automatic bench report must not trigger another test (feedback loop),
         // and open models sometimes repeat set_dials in one turn, so allow one test per turn at most.
         let testBudget = lastUserText.startsWith("[test]") ? 0 : 1;
+        let builtThisTurn = false;
 
         // 1) Recall from Walrus Memory before the model says anything.
         let recalled: ParsedMemory[] = [];
@@ -100,22 +112,63 @@ export async function POST(req: Request) {
               runTest: z.boolean().optional(),
             }),
             execute: async ({ params, reason, runTest }) => {
-              const cur = getSim(simId)!;
-              const { params: clean, rejected } = sanitizeParams(cur.params, params);
+              const { params: clean, rejected } = sanitizeParams(sim.params, params);
               const willTest = Boolean(runTest) && testBudget > 0;
               if (willTest) testBudget--;
               return { simId, params: clean, rejected, reason: reason ?? "", runTest: willTest };
             },
           }),
           switch_bench: tool({
-            description: `Move to another bench. Options: ${SIMS.map((s) => s.id).join(", ")}.`,
-            inputSchema: z.object({ simId: z.enum(SIMS.map((s) => s.id) as [string, ...string[]]) }),
+            description: `Move to another bench, ONLY if that bench actually models the person's problem. Options: ${benches.map((s) => s.id).join(", ")}.`,
+            inputSchema: z.object({ simId: z.string() }),
             execute: async ({ simId: next }) => {
-              simId = next;
-              await db.updateThread(user.id, thread.id, { sim_id: next });
-              return { simId: next, name: getSim(next)!.name };
+              if (builtThisTurn) return { simId, name: sim.name, error: "Stay on the bench you just built." };
+              const target = find(next);
+              if (!target) return { simId, name: sim.name, error: `No bench called "${next}". Options: ${benches.map((s) => s.id).join(", ")}` };
+              sim = target;
+              simId = sim.id;
+              await db.updateThread(user.id, thread.id, { sim_id: simId });
+              return { simId, name: sim.name };
             },
           }),
+          build_bench: tool({
+            description: "Have the AI build a brand-new simulation bench when no existing bench fits. Takes 20-40 seconds.",
+            inputSchema: z.object({
+              request: z.string().min(20).max(1200).describe("what to simulate: the system, the dials it needs, what counts as pass or fail, and any of the person's numbers"),
+            }),
+            execute: async ({ request }) => {
+              try {
+                const context = recalled.length ? memoriesForPrompt(recalled.slice(0, 8)) : undefined;
+                const made = await createCustomSim(user, request, { context, memoryOn });
+                builtThisTurn = true;
+                benches = [...benches, made.sim];
+                sim = made.sim;
+                simId = sim.id;
+                await db.updateThread(user.id, thread.id, { sim_id: simId });
+                return { built: true, simId, name: sim.name, tagline: sim.tagline, dials: sim.params.map((p) => p.key), seconds: Math.round(made.ms / 1000) };
+              } catch (e) {
+                return { built: false, error: e instanceof Error ? e.message : String(e) };
+              }
+            },
+          }),
+          ...(sim.custom
+            ? {
+                revise_bench: tool({
+                  description: "Change the current AI-built bench (add a dial, change the pass rule, fix wrong behaviour).",
+                  inputSchema: z.object({ change: z.string().min(8).max(800) }),
+                  execute: async ({ change }) => {
+                    try {
+                      const r = await reviseCustomSim(user, simId, { change });
+                      sim = r.sim;
+                      benches = benches.map((s) => (s.id === simId ? r.sim : s));
+                      return { revised: true, simId, name: sim.name, version: r.version, dials: sim.params.map((p) => p.key) };
+                    } catch (e) {
+                      return { revised: false, error: e instanceof Error ? e.message : String(e) };
+                    }
+                  },
+                }),
+              }
+            : {}),
           ...(memoryOn
             ? {
                 remember: tool({
@@ -134,7 +187,7 @@ export async function POST(req: Request) {
                     // A fact that sets dials belongs to this bench even if the model filed it as PROFILE/PREF.
                     const benchScoped = Boolean(ruleDials && Object.keys(ruleDials).length) || !(benchSpecific === false || kind === "PROFILE" || kind === "PREF");
                     const params =
-                      benchScoped && ruleDials ? sanitizeParams(getSim(simId)!.params, ruleDials).params : undefined;
+                      benchScoped && ruleDials ? sanitizeParams(sim.params, ruleDials).params : undefined;
                     const r = await remember(user, {
                       kind: (MEMORY_KINDS as readonly string[]).includes(kind) ? kind : "INSIGHT",
                       simId: benchScoped ? simId : null,
@@ -161,7 +214,8 @@ export async function POST(req: Request) {
           model: chatModel(),
           system: systemPrompt({
             username: user.username,
-            simId,
+            sim,
+            others: benches,
             dials,
             memoryOn,
             recalled: recallError ? `(memory recall failed: ${recallError})` : memoriesForPrompt(recalled),
@@ -170,6 +224,7 @@ export async function POST(req: Request) {
           tools,
           stopWhen: isStepCount(5),
           temperature: 0.4,
+          maxRetries: 5, // Groq free tier: 8k tokens/min shared by everyone, so ride out short bursts
         });
 
         writer.merge(toUIMessageStream({ stream: result.stream, sendStart: false }));
@@ -180,7 +235,7 @@ export async function POST(req: Request) {
       },
       onError: (e) => {
         console.error("[chat] stream error", e);
-        return e instanceof Error ? e.message : "Something went wrong";
+        return friendlyError(e);
       },
     });
 

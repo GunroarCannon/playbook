@@ -34,6 +34,8 @@ export type SimDef = {
   params: ParamSpec[];
   /** Words people use for this domain, used to route new chats to the right bench. */
   keywords: string[];
+  /** True for benches the AI wrote for one person (code lives in the database, not /public). */
+  custom?: boolean;
 };
 
 export const SIMS: SimDef[] = [
@@ -194,9 +196,155 @@ export const SIMS: SimDef[] = [
       { key: "targetPeriodS", label: "Target period", control: "fader", min: 0.3, max: 8, step: 0.05, unit: "s", default: 2, showIf: { key: "mode", equals: "pendulum" } },
     ],
   },
+  {
+    id: "outbreak",
+    name: "Outbreak Bench",
+    tagline: "Disease spread, vaccines, distancing, hospital beds",
+    src: "/sims/outbreak.html",
+    keywords: ["outbreak", "epidemic", "pandemic", "virus", "disease", "flu", "covid", "cholera", "vaccine", "infection", "hospital", "spread", "sir"],
+    brief:
+      "SIR epidemic model in quarter-day steps. beta = r0 / infectiousDays, cut by distancing (mild 30%, strict 60%) from distancingDay on. " +
+      "vaccinatedPct start immune. Hospital demand = currently infected x hospitalPct. Capacity = bedsPer1000 per 1000 people. " +
+      "A test PASSES when peak hospital demand never exceeds the beds. Score = % of people never infected.",
+    params: [
+      { key: "populationK", label: "Population", control: "dial", min: 1, max: 1000, step: 1, unit: "k people", default: 100 },
+      { key: "r0", label: "R0 (spread)", control: "dial", min: 0.5, max: 8, step: 0.1, default: 2.5 },
+      { key: "infectiousDays", label: "Sick for", control: "fader", min: 2, max: 21, step: 1, unit: "days", default: 7 },
+      { key: "initialCases", label: "First cases", control: "fader", min: 1, max: 500, step: 1, default: 10 },
+      { key: "vaccinatedPct", label: "Vaccinated", control: "fader", min: 0, max: 95, step: 1, unit: "%", default: 0 },
+      {
+        key: "distancing",
+        label: "Distancing",
+        control: "select",
+        default: "none",
+        options: [
+          { value: "none", label: "None" },
+          { value: "mild", label: "Mild (-30%)" },
+          { value: "strict", label: "Strict (-60%)" },
+        ],
+      },
+      { key: "distancingDay", label: "Distancing from", control: "fader", min: 0, max: 120, step: 1, unit: "day", default: 20 },
+      { key: "hospitalPct", label: "Need a bed", control: "fader", min: 0.5, max: 20, step: 0.5, unit: "%", default: 5 },
+      { key: "bedsPer1000", label: "Beds", control: "fader", min: 0.5, max: 12, step: 0.1, unit: "/1000", default: 2.5 },
+      { key: "days", label: "Days simulated", control: "fader", min: 30, max: 365, step: 5, unit: "d", default: 180 },
+    ],
+  },
+  {
+    id: "braking",
+    name: "Stopping Distance Bench",
+    tagline: "Speed, reaction time, wet roads, a child runs out",
+    src: "/sims/braking.html",
+    keywords: ["car", "brake", "braking", "stopping", "speed", "drive", "driving", "road", "crash", "tyre", "tire", "abs", "accident", "phone", "reaction"],
+    brief:
+      "A child runs into the road hazardM ahead. Stopping distance = speed x reaction time (+1.5 s if on the phone) + v^2 / (2a), " +
+      "a = g (mu cos + sin of slope). mu: dry 0.8, wet 0.5, gravel 0.4, ice 0.1; worn tyres x0.75; no ABS (locked wheels) x0.75. " +
+      "A test PASSES when the car stops before the hazard. Score = metres to spare. On failure it reports impact speed.",
+    params: [
+      { key: "speedKmh", label: "Speed", control: "dial", min: 10, max: 160, step: 1, unit: "km/h", default: 60 },
+      { key: "reactionS", label: "Reaction time", control: "fader", min: 0.3, max: 3, step: 0.1, unit: "s", default: 1 },
+      { key: "phone", label: "On the phone", control: "toggle", default: false },
+      {
+        key: "road",
+        label: "Road",
+        control: "select",
+        default: "dry",
+        options: [
+          { value: "dry", label: "Dry tarmac" },
+          { value: "wet", label: "Wet" },
+          { value: "gravel", label: "Gravel" },
+          { value: "ice", label: "Ice" },
+        ],
+      },
+      {
+        key: "tyres",
+        label: "Tyres",
+        control: "select",
+        default: "new",
+        options: [
+          { value: "new", label: "New" },
+          { value: "worn", label: "Worn" },
+        ],
+      },
+      { key: "abs", label: "ABS brakes", control: "toggle", default: true },
+      { key: "slopePct", label: "Slope (− downhill)", control: "fader", min: -15, max: 15, step: 1, unit: "%", default: 0 },
+      { key: "hazardM", label: "Hazard distance", control: "fader", min: 5, max: 150, step: 1, unit: "m", default: 40 },
+    ],
+  },
+  {
+    id: "savings",
+    name: "Savings Goal Bench",
+    tagline: "Monthly saving vs interest, inflation and emergencies",
+    src: "/sims/savings.html",
+    keywords: ["save", "saving", "savings", "money", "interest", "inflation", "goal", "budget", "invest", "salary", "naira", "rent", "school fees", "deposit"],
+    brief:
+      "Month-by-month savings. Interest compounds monthly; the monthly deposit rises by raisePct once a year; inflation reduces buying power. " +
+      "The goal is in TODAY's money, so the final balance is deflated before comparing. emergency=true withdraws 3 months of deposits halfway. " +
+      "A test PASSES when the inflation-adjusted final balance >= goal. Score = % of goal.",
+    params: [
+      { key: "monthly", label: "Saved per month", control: "dial", min: 0, max: 1000000, step: 1000, default: 50000 },
+      { key: "startAmount", label: "Starting amount", control: "fader", min: 0, max: 10000000, step: 10000, default: 0 },
+      { key: "raisePct", label: "Raise deposit yearly", control: "fader", min: 0, max: 50, step: 1, unit: "%", default: 0 },
+      { key: "interestPct", label: "Interest", control: "dial", min: 0, max: 40, step: 0.5, unit: "%/yr", default: 10 },
+      { key: "inflationPct", label: "Inflation", control: "fader", min: 0, max: 50, step: 0.5, unit: "%/yr", default: 20 },
+      { key: "years", label: "Years", control: "fader", min: 1, max: 30, step: 1, unit: "yr", default: 3 },
+      { key: "goal", label: "Goal (today's money)", control: "dial", min: 10000, max: 100000000, step: 10000, default: 2000000 },
+      { key: "emergency", label: "Emergency withdrawal", control: "toggle", default: false },
+    ],
+  },
+  {
+    id: "rocket",
+    name: "Bottle Rocket Bench",
+    tagline: "Water rockets: pressure, water fill, fins, apogee",
+    src: "/sims/rocket.html",
+    keywords: ["rocket", "bottle", "water rocket", "launch", "psi", "pressure", "fins", "apogee", "altitude", "nozzle", "science fair"],
+    brief:
+      "Water rocket. Thrust = 2 A (P - Patm) while water remains; the air expands adiabatically (gamma 1.4) so pressure drops as water leaves. " +
+      "Then it coasts with quadratic drag (Cd 0.45 with fins, 1.4 tumbling without). Best water fill is usually 30-40%. " +
+      "A test PASSES when the apogee reaches targetM. Score = apogee in metres.",
+    params: [
+      {
+        key: "bottleL",
+        label: "Bottle",
+        control: "select",
+        default: "2",
+        options: [
+          { value: "0.5", label: "0.5 L" },
+          { value: "1.5", label: "1.5 L" },
+          { value: "2", label: "2 L" },
+        ],
+      },
+      { key: "waterPct", label: "Water fill", control: "fader", min: 0, max: 90, step: 1, unit: "%", default: 33 },
+      { key: "pressurePsi", label: "Pressure", control: "dial", min: 10, max: 120, step: 1, unit: "psi", default: 60 },
+      {
+        key: "nozzleMm",
+        label: "Nozzle",
+        control: "select",
+        default: "22",
+        options: [
+          { value: "9", label: "9 mm" },
+          { value: "15", label: "15 mm" },
+          { value: "22", label: "22 mm (open neck)" },
+        ],
+      },
+      { key: "angleDeg", label: "Launch angle", control: "dial", min: 30, max: 90, step: 1, unit: "°", default: 85 },
+      { key: "dryMassG", label: "Dry mass", control: "fader", min: 50, max: 500, step: 5, unit: "g", default: 150 },
+      { key: "fins", label: "Fins", control: "toggle", default: true },
+      { key: "targetM", label: "Target height", control: "fader", min: 5, max: 120, step: 1, unit: "m", default: 30 },
+    ],
+  },
 ];
 
-export const getSim = (id: string) => SIMS.find((s) => s.id === id);
+/**
+ * AI-built benches. The browser registers the signed-in person's custom sims here so the
+ * synchronous getSim() works everywhere in the UI. Server code must use resolveSim() (sims-server.ts)
+ * instead, because a module-level registry would be shared between users there.
+ */
+const customRegistry = new Map<string, SimDef>();
+export function registerCustomSims(list: SimDef[]) {
+  for (const s of list) customRegistry.set(s.id, { ...s, custom: true });
+}
+
+export const getSim = (id: string) => SIMS.find((s) => s.id === id) ?? customRegistry.get(id);
 
 export function defaultParams(params: ParamSpec[]): Record<string, ParamValue> {
   return Object.fromEntries(params.map((p) => [p.key, p.default]));

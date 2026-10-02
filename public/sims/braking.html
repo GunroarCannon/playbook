@@ -1,0 +1,153 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Stopping Distance Bench — a child runs out `hazardM` ahead. Stopping distance = reaction distance
+ * (speed x reaction time) + braking distance v^2 / (2 a), with a = g (mu cos(theta) + sin(theta)).
+ * Without ABS the wheels lock and you get sliding friction (~75% of peak).
+ */
+const MU = { dry: 0.8, wet: 0.5, gravel: 0.4, ice: 0.1 };
+const TYRE = { new: 1, worn: 0.75 };
+const G = 9.81;
+function simulate(p) {
+  const v = +p.speedKmh / 3.6;
+  const react = +p.reactionS + (p.phone ? 1.5 : 0);
+  const mu = MU[p.road] * TYRE[p.tyres] * (p.abs ? 1 : 0.75);
+  const th = Math.atan(+p.slopePct / 100); // + uphill helps, - downhill hurts
+  const a = Math.max(0.05, G * (mu * Math.cos(th) + Math.sin(th)));
+  const dReact = v * react, dBrake = (v * v) / (2 * a), stop = dReact + dBrake;
+  const hz = +p.hazardM;
+  let impact = 0;
+  if (stop > hz) impact = hz <= dReact ? v : Math.sqrt(Math.max(0, v * v - 2 * a * (hz - dReact)));
+  const tStop = react + v / a;
+  return { v, react, mu, a, dReact, dBrake, stop, hz, impact, impactKmh: impact * 3.6, tStop };
+}
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  Bench.metrics({
+    stressRatio: R.stop / R.hz,
+    label: `stops in ${R.stop.toFixed(1)} m · hazard at ${R.hz} m${R.impact ? ` · hits at ${R.impactKmh.toFixed(0)} km/h` : ""}`,
+    values: { stopM: +R.stop.toFixed(1), reactM: +R.dReact.toFixed(1), brakeM: +R.dBrake.toFixed(1), impactKmh: Math.round(R.impactKmh) },
+  });
+}
+
+// position along the road at time t (s) after the child appears
+function posAt(t) {
+  const { v, react, a } = R;
+  if (t <= react) return { x: v * t, speed: v, braking: false };
+  const tb = t - react, vb = Math.max(0, v - a * tb);
+  const x = R.dReact + (v * v - vb * vb) / (2 * a);
+  return { x, speed: vb, braking: true };
+}
+
+Bench.init({
+  params: { speedKmh: 60, reactionS: 1.0, phone: false, road: "dry", tyres: "new", abs: true, slopePct: 0, hazardM: 40 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, done: false, p: { ...p }, dur: Math.min(7, Math.max(3, R.tStop * 0.9 + 0.8)) }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+
+    D.text(`${p.speedKmh} km/h on a ${p.road} road · ${p.tyres} tyres · ${p.abs ? "ABS" : "no ABS"}${+p.slopePct ? ` · ${p.slopePct > 0 ? "uphill" : "downhill"} ${Math.abs(p.slopePct)}%` : ""}${p.phone ? " · on the phone" : ""}`, 18, 28, { size: 14 });
+    D.text(`reaction ${R.react.toFixed(1)} s → ${R.dReact.toFixed(1)} m · braking ${R.dBrake.toFixed(1)} m · total ${R.stop.toFixed(1)} m`, 18, 48, { size: 12, mono: true, color: C.ink2 });
+
+    // scale: fit max(stop, hazard) + margin
+    const roadY = H * 0.62, left = 70, right = W - 40;
+    const span = Math.max(R.stop, R.hz) * 1.12 + 8;
+    const sx = (m) => left + (m / span) * (right - left);
+
+    // road
+    D.line(left - 50, roadY + 22, right + 20, roadY + 22, { width: 2 });
+    D.line(left - 50, roadY - 40, right + 20, roadY - 40, { width: 1.2, color: C.ink3 });
+    for (let m = 0; m < span; m += 6) D.line(sx(m), roadY - 9, sx(m + 3), roadY - 9, { width: 2, color: C.ink3, single: true, rough: 0.2 });
+    if (p.road === "wet") for (let k = 0; k < 14; k++) D.line(left + k * 60, roadY + 10, left + k * 60 + 18, roadY + 10, { color: C.blue, width: 1, single: true });
+    if (p.road === "ice") ctx.fillStyle = C.blue, ctx.globalAlpha = 0.08, ctx.fillRect(left - 50, roadY - 40, right - left + 70, 62), ctx.globalAlpha = 1;
+    if (p.road === "gravel") { const r = D.rng(3); for (let k = 0; k < 120; k++) { ctx.fillStyle = C.ink3; ctx.fillRect(left - 40 + r() * (right - left + 50), roadY - 30 + r() * 48, 1.6, 1.6); } }
+    for (let m = 0; m <= span; m += span > 120 ? 20 : 10) D.text(`${m}m`, sx(m), roadY + 40, { size: 10, mono: true, align: "center", color: C.ink3 });
+
+    // dimension lines: reaction (amber) + braking (red)
+    D.dim(sx(0), roadY + 62, sx(R.dReact), roadY + 62, `think ${R.dReact.toFixed(1)}m`, { color: C.amber });
+    D.dim(sx(R.dReact), roadY + 62, sx(R.stop), roadY + 62, `brake ${R.dBrake.toFixed(1)}m`, { color: C.red });
+
+    // hazard: a child chasing a ball
+    const hx = sx(R.hz);
+    const t = anim ? Math.min(R.tStop + 0.2, ((now - anim.t0) / anim.dur) * (R.tStop + 0.2)) : 0;
+    if (anim && !anim.done && now - anim.t0 >= anim.dur) { anim.done = true; finish(anim.p); }
+    const car = anim ? posAt(Math.min(t, R.tStop)) : { x: 0, speed: R.v, braking: false };
+    const hit = R.impact > 0 && car.x >= R.hz - 0.01 && !!anim;
+    const carX = sx(Math.min(car.x, hit ? R.hz : car.x));
+    stick(D, hx + 10, roadY - 8, hit ? C.red : C.ink);
+    D.circle(hx + 26, roadY + 4, 5, { color: C.red, seed: 4 });
+    D.line(hx, roadY - 40, hx, roadY + 22, { color: C.red, dash: [3, 3], width: 1, single: true });
+    D.text(`hazard ${R.hz}m`, hx, roadY - 48, { size: 12, color: C.red, align: "center" });
+
+    // skid marks while braking
+    if (anim && car.braking) D.line(sx(R.dReact), roadY + 14, carX - 24, roadY + 14, { width: 3, color: C.ink2, alpha: 0.5, single: true });
+    drawCar(D, carX, roadY, car.braking);
+
+    // speedometer
+    const kmh = (anim ? (hit ? R.impact : car.speed) : R.v) * 3.6;
+    const gxm = W - 110, gym = 120;
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(gxm, gym, 40, Math.PI, 0); ctx.stroke();
+    for (let k = 0; k <= 8; k++) { const a = Math.PI + (k / 8) * Math.PI; D.line(gxm + Math.cos(a) * 34, gym + Math.sin(a) * 34, gxm + Math.cos(a) * 40, gym + Math.sin(a) * 40, { width: 1, single: true }); }
+    const na = Math.PI + D.clamp(kmh / 160, 0, 1) * Math.PI;
+    D.line(gxm, gym, gxm + Math.cos(na) * 32, gym + Math.sin(na) * 32, { color: C.red, width: 2.2, single: true });
+    D.text(`${Math.round(kmh)} km/h`, gxm, gym + 18, { size: 13, mono: true, align: "center" });
+
+    if (anim && anim.done) D.stamp(R.impact ? `HIT AT ${Math.round(R.impactKmh)} KM/H` : `STOPPED ${(R.hz - R.stop).toFixed(1)}M SHORT`, W / 2, roadY - 110, R.impact ? C.red : C.green);
+    if (!anim) D.text("(projection — press RUN TEST: the child runs out and you react)", 18, H - 12, { size: 11, color: C.ink3 });
+  },
+});
+
+function drawCar(D, x, y, braking) {
+  const { C } = D;
+  // x is the front bumper
+  D.rect(x - 70, y - 22, 70, 20, { fill: C.paper, seed: 21 });
+  D.line(x - 56, y - 22, x - 46, y - 38, { seed: 22 }); D.line(x - 46, y - 38, x - 22, y - 38, { seed: 23 }); D.line(x - 22, y - 38, x - 12, y - 22, { seed: 24 });
+  D.line(x - 34, y - 38, x - 34, y - 22, { seed: 25, width: 1 });
+  D.circle(x - 54, y + 2, 9, { fill: C.paper, seed: 26 }); D.circle(x - 16, y + 2, 9, { fill: C.paper, seed: 27 });
+  D.circle(x - 54, y + 2, 3, { seed: 28 }); D.circle(x - 16, y + 2, 3, { seed: 29 });
+  if (braking) { D.circle(x - 70, y - 16, 3, { fill: C.red, color: C.red, seed: 30 }); }
+}
+
+function stick(D, x, y, col) {
+  const { ctx } = D;
+  ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(x, y - 22, 5, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x, y - 17); ctx.lineTo(x + 2, y - 4);
+  ctx.moveTo(x - 7, y - 13); ctx.lineTo(x + 1, y - 12); ctx.lineTo(x + 9, y - 16);
+  ctx.moveTo(x + 2, y - 4); ctx.lineTo(x - 6, y + 6);
+  ctx.moveTo(x + 2, y - 4); ctx.lineTo(x + 9, y + 5);
+  ctx.stroke();
+}
+
+function finish(p) {
+  const desc = `${p.speedKmh} km/h, ${R.react.toFixed(1)} s reaction${p.phone ? " (on the phone)" : ""}, ${p.road} road, ${p.tyres} tyres, ${p.abs ? "ABS" : "no ABS"}${+p.slopePct ? `, ${p.slopePct}% slope` : ""}, hazard at ${p.hazardM} m`;
+  const stats = `stopping distance ${R.stop.toFixed(1)} m (${R.dReact.toFixed(1)} m reacting + ${R.dBrake.toFixed(1)} m braking)`;
+  const ok = R.impact === 0;
+  Bench.result({
+    passed: ok,
+    summary: `${desc}: ${stats}${ok ? `, stopped ${(R.hz - R.stop).toFixed(1)} m short` : ""}.`,
+    failureReason: ok ? undefined : R.hz <= R.dReact ? `hit at full speed (${Math.round(R.impactKmh)} km/h) before even touching the brake` : `still doing ${Math.round(R.impactKmh)} km/h at the hazard`,
+    score: ok ? +(R.hz - R.stop).toFixed(1) : undefined, scoreLabel: "metres to spare",
+    metrics: { stopM: +R.stop.toFixed(1), reactM: +R.dReact.toFixed(1), brakeM: +R.dBrake.toFixed(1), impactKmh: Math.round(R.impactKmh) },
+  });
+}
+</script>
+</body>
+</html>

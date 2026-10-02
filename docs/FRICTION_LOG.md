@@ -49,3 +49,15 @@ On the first message ("max 50 sticks, wood glue only, must span 40cm, test 5kg")
 
 ### 9. Model leaks memories from other benches into the welcome message
 A `[PROFILE]` memory about running a supermarket was recalled on the pendulum bench, and the welcome-back said "let's handle your lunch rush" on a physics bench. Fixed by telling the model to ignore memories about other projects. Tags help here, because we can filter by bench before prompting.
+
+### 10. Ambiguous wording becomes a wrong memory
+Test message: "never go below 80% depth of discharge". Qwen saved `maxDoD=20` (it read it as "keep 80% charge"). The memory was stored faithfully, so the mistake came back on every later sheet. Memories are only as good as their wording. Having the bot read back what it saved ("Saved: max depth of discharge 20%. Right?") would catch this, and a forget/edit API (item 1) would make fixing it possible.
+
+### 11. Profile facts that carry dial values got dropped
+"I'm in Lagos, rainy season gives me 3.5 sun hours" was filed as `[PROFILE]` with `sunHours=3.5`. PROFILE memories were treated as global, so their dial values were never applied. Fix: any memory that sets dials is scoped to the bench it came from, whatever its kind.
+
+### 12. Groq's free tier is shared by every user of a deployed bot
+On Groq's free tier, `qwen/qwen3.8-27b` gets about 8,000 tokens per minute, 1,000 output tokens per minute and 1,000 requests per day for the whole API key. A chat turn with recalled memories is about 2,500 input tokens, and generating one AI-built bench is about 2,500 output tokens, so one person building a bench can stall everyone else's chat for 1–2 minutes. Mitigations: retries with backoff (`maxRetries: 5`), a friendly "busy, try again" message, and a terse physics reviewer (about 200 tokens). The real fix is the Dev tier or another provider for non-OpenAI open models.
+
+### 13. Recalled memory makes every tool step more expensive
+Every tool step re-sends the system prompt with the recalled memories. With up to 5 steps per turn, one message can use 10k+ input tokens, which matters on rate-limited tiers. Recalling once per turn (not per step) and keeping memories as short tagged sentences keeps this down.

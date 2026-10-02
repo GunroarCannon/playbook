@@ -65,9 +65,14 @@ function simulate(p) {
 }
 
 let R = null, anim = null;
+// On-screen people: each customer eases toward where the simulation says they are.
+const disp = new Map();
 
 function publish(p) {
   R = simulate(p);
+  const peakI = R.qlen.indexOf(Math.max(...R.qlen));
+  R.peakT = Math.max(0, peakI) * 30;
+  disp.clear();
   Bench.metrics({
     stressRatio: R.rho,
     label: `utilisation ${(R.rho * 100).toFixed(0)}% · ${R.walkouts} walkouts · wait ${Math.round(R.avgWait)}s`,
@@ -81,81 +86,148 @@ Bench.init({
   params: { arrivalRate: 45, cashiers: 2, serviceMin: 2.5, expressLane: false, patienceMin: 6, targetWaitSec: 180, shiftHours: 2, wagePerHr: 1200, marginPerCustomer: 400 },
   onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
   onReset(p) { anim = null; publish(p); },
-  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, dur: 6, done: false, p: { ...p } }; },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, dur: 10, done: false, p: { ...p } }; },
   draw(D, p, dt, now) {
     if (!R) publish(p);
     const { ctx, C } = D;
     D.grid();
     const W = D.W, H = D.H;
+    const live = !!anim && !anim.done;
 
-    const simT = anim ? Math.min(1, (now - anim.t0) / anim.dur) * R.T : R.T * 0.5;
+    const simT = anim ? Math.min(1, (now - anim.t0) / anim.dur) * R.T : R.peakT;
     if (anim && !anim.done && simT >= R.T) { anim.done = true; finish(anim.p); }
 
-    // floor plan
-    const top = 92, planW = W - 250, laneGap = Math.min(110, (planW - 40) / Math.max(1, R.lanes));
+    // ---------- floor plan ----------
+    const planW = W - 250, top = 96;
+    const laneGap = Math.min(120, (planW - 40) / Math.max(1, R.lanes));
     const x0 = 30 + (planW - laneGap * (R.lanes - 1)) / 2;
-    D.text(`Checkout rush · ${p.arrivalRate} customers/hr · ${R.s} cashier${R.s > 1 ? "s" : ""}${R.express ? " (lane 1 express)" : ""}`, 18, 30, { size: 15 });
-    const clock = Math.floor(simT / 60);
-    D.text(`t = ${String(Math.floor(clock / 60)).padStart(2, "0")}:${String(clock % 60).padStart(2, "0")} into the rush`, 18, 50, { size: 13, mono: true, color: C.ink2 });
+    const slotY = (k) => top + 104 + k * 26;
+    const maxSlots = Math.max(1, Math.floor((H - 90 - slotY(0)) / 26));
+    const entrance = { x: 30 + planW / 2, y: H - 18 };
+    const exitServed = { x: 8, y: top + 66 };
+    const exitWalk = { x: W - 30, y: H - 30 };
 
-    // entrance / exit
-    D.text("ENTRANCE ↑", 30 + planW / 2 - 40, H - 16, { size: 12, color: C.ink3 });
-    D.text("× walkouts", W - 110, H - 16, { size: 12, color: C.red });
+    D.text(`Checkout rush · ${p.arrivalRate} customers/hr · ${R.s} cashier${R.s > 1 ? "s" : ""}${R.express ? " (till 1 express)" : ""}`, 18, 28, { size: 15 });
+    const clock = Math.floor(simT / 60);
+    const clockStr = `${String(Math.floor(clock / 60)).padStart(2, "0")}:${String(clock % 60).padStart(2, "0")}`;
+    D.text(anim ? `t = ${clockStr} into the rush` : `busiest moment: ${clockStr} into the rush`, 18, 48, { size: 13, mono: true, color: C.ink2 });
+
+    // door + exit labels
+    D.line(entrance.x - 34, H - 6, entrance.x + 34, H - 6, { width: 3, color: C.ink2 });
+    D.text("ENTRANCE", entrance.x, H - 12, { size: 11, align: "center", color: C.ink3, mono: true });
+    D.text("← paid & left", 10, top + 40, { size: 11, color: C.green });
+    D.text("walked out →", W - 22, H - 46, { size: 11, color: C.red, align: "right" });
 
     for (let i = 0; i < R.lanes; i++) {
       const x = x0 + i * laneGap;
-      // counter
-      D.rect(x - 26, top, 52, 26, { hatch: true, seed: 300 + i });
-      D.rect(x - 9, top - 14, 18, 14, { seed: 400 + i });
-      D.text(R.express && i === 0 ? "EXPRESS" : `TILL ${i + 1}`, x, top + 44, { size: 11, align: "center", mono: true, color: R.express && i === 0 ? C.blue : C.ink2 });
-      // cashier stick figure behind the counter
-      figure(D, x, top - 30, C.ink, 0.8);
-      D.line(x, top + 52, x, H - 70, { dash: [3, 5], width: 1, color: C.ink3, single: true });
+      D.rect(x - 28, top, 56, 26, { hatch: true, seed: 300 + i });
+      D.rect(x - 9, top - 13, 18, 13, { seed: 400 + i }); // till
+      D.text(R.express && i === 0 ? "EXPRESS" : `TILL ${i + 1}`, x, top + 42, { size: 11, align: "center", mono: true, color: R.express && i === 0 ? C.blue : C.ink2 });
+      figure(D, x, top - 22, C.navy, 0.8);
+      // rope barrier guiding the line
+      D.line(x - 22, top + 92, x - 22, slotY(maxSlots - 1) + 10, { dash: [2, 5], width: 1, color: C.ink3, single: true });
+      D.line(x + 22, top + 92, x + 22, slotY(maxSlots - 1) + 10, { dash: [2, 5], width: 1, color: C.ink3, single: true });
     }
 
-    // customers at time simT
-    const inQueue = Array.from({ length: R.lanes }, () => []);
-    const inService = [];
-    const leaving = [];
+    // ---------- who is where at simT ----------
+    const queues = Array.from({ length: R.lanes }, () => []);
+    const serving = [];
+    let served = 0, walked = 0;
+    const departing = [];
     for (const c of R.customers) {
       if (c.arrive > simT) break;
-      if (c.reneged != null && c.reneged <= simT) { if (simT - c.reneged < 120) leaving.push(c); continue; }
-      if (c.start != null && c.start <= simT) { if (c.end == null || c.end > simT) inService.push(c); continue; }
-      inQueue[c.lane].push(c);
+      if (c.reneged != null && c.reneged <= simT) { walked++; departing.push([c, "out"]); continue; }
+      if (c.start != null && c.start <= simT) {
+        if (c.end == null || c.end > simT) serving.push(c);
+        else { served++; departing.push([c, "done"]); }
+        continue;
+      }
+      queues[c.lane].push(c);
     }
-    inService.forEach((c) => { const x = x0 + c.lane * laneGap; figure(D, x, top + 62, c.small ? C.blue : C.ink, 0.75); });
-    inQueue.forEach((q, i) => {
-      const x = x0 + i * laneGap;
-      q.forEach((c, k) => {
-        const y = top + 92 + k * 22;
-        if (y > H - 60) return;
-        const waited = simT - c.arrive, frac = waited / (+p.patienceMin * 60);
-        figure(D, x + (k % 2 ? 6 : -6), y, frac > 0.75 ? C.red : frac > 0.45 ? C.amber : C.ink, 0.6);
-      });
-      if (q.length > 0) D.text(`${q.length} waiting`, x + 22, top + 96, { size: 11, mono: true, color: q.length > 6 ? C.red : C.ink2 });
+
+    const targets = new Map();
+    serving.forEach((c) => targets.set(c.id, { x: x0 + c.lane * laneGap, y: top + 70, c, svc: true }));
+    queues.forEach((q, i) => q.forEach((c, k) => targets.set(c.id, { x: x0 + i * laneGap + (k % 2 ? 5 : -5), y: slotY(Math.min(k, maxSlots - 1)), c, hidden: k >= maxSlots })));
+
+    if (live) {
+      const ease = Math.min(1, dt * 7);
+      for (const [id, t] of targets) {
+        let d = disp.get(id);
+        if (!d) { d = { x: entrance.x + (Math.random() - 0.5) * 30, y: entrance.y, a: 0 }; disp.set(id, d); }
+        d.x += (t.x - d.x) * ease; d.y += (t.y - d.y) * ease; d.a = Math.min(1, d.a + dt * 4);
+        d.t = t;
+      }
+      for (const [c, kind] of departing) {
+        const d = disp.get(c.id);
+        if (!d) continue;
+        if (!d.leaving) { d.leaving = now; d.kind = kind; }
+        const to = kind === "out" ? exitWalk : exitServed;
+        d.x += (to.x - d.x) * Math.min(1, dt * 3.2); d.y += (to.y - d.y) * Math.min(1, dt * 3.2);
+        d.a = Math.max(0, 1 - (now - d.leaving) / 0.9);
+        if (now - d.leaving > 0.9) disp.delete(c.id);
+      }
+    }
+
+    const patience = +p.patienceMin * 60;
+    const drawPerson = (c, x, y, alpha, opts = {}) => {
+      const frac = (simT - c.arrive) / patience;
+      const col = opts.kind === "out" ? C.red : opts.kind === "done" ? C.green : opts.svc ? C.ink : frac > 0.75 ? C.red : frac > 0.45 ? C.amber : C.ink;
+      ctx.globalAlpha = alpha;
+      figure(D, x, y, col, 0.82, c.small ? 0.6 : 1.1);
+      if (opts.kind === "out") D.text("×", x + 9, y - 14, { size: 14, color: C.red });
+      ctx.globalAlpha = 1;
+    };
+
+    if (live) {
+      for (const [, d] of disp) {
+        if (d.leaving) { drawPerson(d.t.c, d.x, d.y, d.a, { kind: d.kind }); continue; }
+        if (d.t.hidden) continue;
+        drawPerson(d.t.c, d.x, d.y, d.a, { svc: d.t.svc });
+      }
+    } else {
+      for (const [, t] of targets) if (!t.hidden) drawPerson(t.c, t.x, t.y, 1, { svc: t.svc });
+    }
+
+    // service progress rings + queue counts
+    serving.forEach((c) => {
+      const x = x0 + c.lane * laneGap, y = top + 70;
+      const prog = c.end ? D.clamp((simT - c.start) / Math.max(1, c.end - c.start), 0, 1) : 0;
+      ctx.strokeStyle = C.green; ctx.lineWidth = 2.2; ctx.beginPath();
+      ctx.arc(x + 20, y - 8, 7, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2); ctx.stroke();
     });
-    leaving.forEach((c, k) => {
-      const age = (simT - c.reneged) / 120;
-      const x = D.lerp(x0 + c.lane * laneGap, W - 40, age), y = D.lerp(top + 120, H - 40, age);
-      D.text("×", x, y, { size: 16, color: C.red, align: "center" });
+    queues.forEach((q, i) => {
+      const x = x0 + i * laneGap;
+      if (q.length > maxSlots) D.text(`+${q.length - maxSlots} more`, x, slotY(maxSlots - 1) + 26, { size: 11, mono: true, color: C.red, align: "center" });
+      if (q.length) D.text(`${q.length} in line`, x + 26, top + 100, { size: 11, mono: true, color: q.length > 6 ? C.red : C.ink2 });
     });
 
-    // queue length sparkline (bottom-left)
-    const gx = 18, gy = H - 40, gw = Math.min(220, W * 0.3), gh = 46;
-    D.text("queue length over the rush", gx, gy - gh - 8, { size: 11, color: C.ink3 });
+    // live counters
+    D.text(`✓ ${served} paid`, W - 210, 30, { size: 13, mono: true, color: C.green });
+    D.text(`× ${walked} walked out`, W - 120, 30, { size: 13, mono: true, color: walked ? C.red : C.ink3 });
+
+    // queue length sparkline (bottom-left) with a cursor at simT
+    const gx = 18, gy = H - 40, gw = Math.min(200, W * 0.26), gh = 42;
+    D.text("people waiting over the rush", gx, gy - gh - 8, { size: 11, color: C.ink3 });
     D.line(gx, gy, gx + gw, gy, { width: 1, single: true, color: C.ink2 });
     D.line(gx, gy, gx, gy - gh, { width: 1, single: true, color: C.ink2 });
     const maxQ = Math.max(4, ...R.qlen);
     ctx.strokeStyle = C.navy; ctx.lineWidth = 1.6; ctx.beginPath();
-    const upto = Math.floor((simT / R.T) * R.qlen.length);
-    R.qlen.slice(0, Math.max(2, upto)).forEach((q, i) => {
+    R.qlen.forEach((q, i) => {
       const x = gx + (i / (R.qlen.length - 1)) * gw, y = gy - (q / maxQ) * gh;
       i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
     });
-    ctx.stroke();
+    ctx.globalAlpha = anim ? 0.25 : 1; ctx.stroke(); ctx.globalAlpha = 1;
+    if (anim) {
+      ctx.beginPath();
+      const upto = Math.floor((simT / R.T) * (R.qlen.length - 1));
+      R.qlen.slice(0, upto + 1).forEach((q, i) => { const x = gx + (i / (R.qlen.length - 1)) * gw, y = gy - (q / maxQ) * gh; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.stroke();
+    }
+    const cx = gx + (simT / R.T) * gw;
+    D.line(cx, gy, cx, gy - gh, { color: C.red, width: 1, single: true, dash: [2, 3] });
 
     // receipt panel (top-right)
-    const rx = W - 210, ry = 70;
+    const rx = W - 210, ry = 52;
     D.rect(rx, ry, 190, 128, { fill: C.paper, seed: 999 });
     const lines = [
       ["arrivals", R.arrivals], ["served", R.served], ["walkouts", R.walkouts],
@@ -167,11 +239,11 @@ Bench.init({
       const bad = (k === "walkouts" && R.walkouts > R.arrivals * 0.02) || (k === "avg wait" && R.avgWait > +p.targetWaitSec) || (k === "profit" && R.profit <= 0);
       D.text(String(v), rx + 180, ry + 20 + i * 15, { size: 11, mono: true, align: "right", color: bad ? C.red : C.ink });
     });
-    if (!anim) D.text("projection · press RUN TEST", rx + 4, ry + 146, { size: 11, color: C.ink3 });
+    D.text(anim ? "whole-rush totals" : "projection · press RUN TEST to watch", rx + 4, ry + 146, { size: 11, color: C.ink3 });
 
     if (anim && anim.done) {
       const ok = pass(p);
-      D.stamp(ok ? "SMOOTH RUSH" : "MELTDOWN", W - 120, H - 60, ok ? C.green : C.red);
+      D.stamp(ok ? "SMOOTH RUSH" : "MELTDOWN", W - 120, H - 90, ok ? C.green : C.red);
     }
   },
 });
@@ -195,16 +267,20 @@ function finish(p) {
   });
 }
 
-function figure(D, x, y, col, s = 1) {
+function figure(D, x, y, col, s = 1, basket = 0) {
   const { ctx } = D;
-  ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.lineCap = "round";
-  ctx.beginPath(); ctx.arc(x, y - 10 * s, 4.2 * s, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = col; ctx.lineWidth = 1.6; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(x, y - 10 * s, 4.4 * s, 0, Math.PI * 2); ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(x, y - 6 * s); ctx.lineTo(x, y + 6 * s);
-  ctx.moveTo(x - 6 * s, y - 1 * s); ctx.lineTo(x + 6 * s, y - 1 * s);
+  ctx.moveTo(x, y - 5.6 * s); ctx.lineTo(x, y + 6 * s);
+  ctx.moveTo(x - 6 * s, y - 1 * s); ctx.lineTo(x, y - 3 * s); ctx.lineTo(x + 7 * s, y + 1 * s);
   ctx.moveTo(x, y + 6 * s); ctx.lineTo(x - 5 * s, y + 14 * s);
   ctx.moveTo(x, y + 6 * s); ctx.lineTo(x + 5 * s, y + 14 * s);
   ctx.stroke();
+  if (basket) {
+    const bw = 7 * basket * s, bh = 5 * basket * s, bx = x + 7 * s - bw / 2, by = y + 1 * s;
+    ctx.beginPath(); ctx.rect(bx, by, bw, bh); ctx.moveTo(bx + 1, by); ctx.quadraticCurveTo(bx + bw / 2, by - bh, bx + bw - 1, by); ctx.stroke();
+  }
 }
 </script>
 </body>

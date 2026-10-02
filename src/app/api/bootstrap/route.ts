@@ -4,7 +4,8 @@ import { chatModel } from "@/lib/llm";
 import { errorResponse, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { bootstrapMemories, memoriesForPrompt } from "@/lib/memory";
-import { defaultParams, getSim, sanitizeParams } from "@/lib/sims";
+import { SIMS, defaultParams, sanitizeParams } from "@/lib/sims";
+import { resolveSim } from "@/lib/sims-server";
 
 export const maxDuration = 60;
 
@@ -19,7 +20,7 @@ export async function POST(req: Request) {
     const { threadId } = (await req.json()) as { threadId: string };
     const thread = await db.getThread(user.id, threadId);
     if (!thread) return Response.json({ error: "Thread not found" }, { status: 404 });
-    const sim = getSim(thread.sim_id)!;
+    const sim = (await resolveSim(user, thread.sim_id)) ?? SIMS[0];
     const defaults = defaultParams(sim.params);
 
     if (!thread.memory_on) {
@@ -39,7 +40,7 @@ export async function POST(req: Request) {
     }
 
     const started = Date.now();
-    const { memories, preset, constraintParams, errors } = await bootstrapMemories(user, sim.id);
+    const { memories, preset, constraintParams, errors } = await bootstrapMemories(user, sim);
     const ms = Date.now() - started;
     const fromWin = preset?.params ? sanitizeParams(sim.params, preset.params).params : {};
     const fromRules = sanitizeParams(sim.params, constraintParams).params;
@@ -62,6 +63,7 @@ export async function POST(req: Request) {
       const { text: t } = await generateText({
         model: chatModel(),
         temperature: 0.3,
+        maxRetries: 4,
         system:
           "You are Playbook, a friendly engineering partner on a graph-paper workbench. Write a 2-4 sentence welcome-back message. " +
           "Mention the person's key constraint(s) for THIS bench, their best result so far, and the most important past failure to avoid, with numbers. " +

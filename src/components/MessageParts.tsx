@@ -160,6 +160,29 @@ export function ToolCard({ part }: { part: ToolPart }) {
   if (name === "switch_bench") {
     return <div className="my-1 hand text-[14px] text-navy">↪ moved to the {String(out.name ?? part.input?.simId ?? "")}</div>;
   }
+  if (name === "build_bench" || name === "revise_bench") {
+    const ok = done && Boolean(out.built || out.revised);
+    const failed = err || (done && !ok);
+    return (
+      <div className="my-1.5 ink-box-soft bg-sheet-2 px-3 py-2">
+        <div className="hand text-[14px] text-navy flex items-center gap-2">
+          <span>✦</span>
+          {ok ? (
+            <span>
+              {name === "build_bench" ? "Built a new bench:" : "Updated the bench:"} <b className="font-normal underline decoration-wavy decoration-navy/40">{String(out.name ?? "")}</b>
+            </span>
+          ) : failed ? (
+            <span className="text-red">Couldn&apos;t {name === "build_bench" ? "build" : "update"} the bench</span>
+          ) : (
+            <span className="pulse">{name === "build_bench" ? "The AI is drafting a new bench… (20–40 s)" : "Rewiring the bench…"}</span>
+          )}
+        </div>
+        {!done && !err && typeof part.input?.request === "string" && <p className="text-[12.5px] text-ink-2 mt-1 italic">{part.input.request}</p>}
+        {ok && typeof out.tagline === "string" && <p className="text-[12.5px] text-ink-2 mt-0.5">{out.tagline}</p>}
+        {failed && <p className="mono text-[11px] text-red mt-1">{String(out.error ?? part.errorText ?? "")}</p>}
+      </div>
+    );
+  }
   return (
     <div className="my-1 mono text-[12px] text-ink-3">
       {name} {err ? `failed: ${part.errorText}` : done ? "done" : "…"}

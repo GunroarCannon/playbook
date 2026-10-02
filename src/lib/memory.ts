@@ -4,7 +4,7 @@ import { after } from "next/server";
 import { nanoid } from "nanoid";
 import { db, type User } from "./db";
 import { decryptSecret } from "./auth";
-import { getSim, type ParamValue } from "./sims";
+import type { ParamValue, SimDef } from "./sims";
 
 /**
  * Walrus Memory integration.
@@ -210,9 +210,9 @@ function dedupe(list: ParsedMemory[]) {
  * Opening a new thread: pull what matters for this bench from Walrus Memory.
  * Several narrow queries beat one broad one for small open models — each returns a focused slice.
  */
-export async function bootstrapMemories(user: User, simId: string) {
-  const sim = getSim(simId);
-  const domain = sim ? sim.name.replace(" Bench", "") : simId;
+export async function bootstrapMemories(user: User, sim: SimDef) {
+  const simId = sim.id;
+  const domain = sim.name.replace(/ Bench$/, "");
   const queries: { q: string; limit: number; sort?: "recent" }[] = [
     { q: `My constraints, limits, budget and rules for ${domain}`, limit: 6 },
     { q: `Best configuration that worked and passed on ${domain}`, limit: 5 },

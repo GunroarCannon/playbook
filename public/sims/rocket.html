@@ -1,0 +1,162 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Bottle Rocket Bench — water phase: thrust = 2 A (P - Patm), air expands adiabatically (gamma 1.4)
+ * as water leaves. Then a short air puff, then a coast with quadratic drag. Fins keep it pointed
+ * into the wind; without fins it tumbles (drag x3).
+ */
+const PATM = 101325, RHO_W = 1000, RHO_A = 1.2, PSI = 6894.76, G = 9.81;
+const BOTTLE = { "0.5": { V: 0.0005, d: 0.065 }, "1.5": { V: 0.0015, d: 0.088 }, "2": { V: 0.002, d: 0.105 } };
+function simulate(p) {
+  const b = BOTTLE[p.bottleL] || BOTTLE["2"];
+  const A = Math.PI * Math.pow(+p.nozzleMm / 2000, 2);
+  const area = Math.PI * Math.pow(b.d / 2, 2);
+  const cd = p.fins ? 0.45 : 1.4;
+  const water0 = b.V * (+p.waterPct / 100);
+  const Va0 = b.V - water0, P0 = PATM + +p.pressurePsi * PSI;
+  let Va = Va0, water = water0, P = P0;
+  const dry = +p.dryMassG / 1000;
+  const ang = (+p.angleDeg * Math.PI) / 180;
+  let x = 0, y = 0, vx = 0, vy = 0, t = 0, maxY = 0, burnout = null, burnoutV = 0;
+  const path = [{ t, x, y, thrust: true }];
+  const railLen = 0.6;
+  for (let i = 0; i < 400000 && t < 30; i++) {
+    const thrusting = water > 0 && P > PATM;
+    const dt = thrusting ? 0.0002 : 0.005;
+    const m = dry + water * RHO_W;
+    const v = Math.hypot(vx, vy);
+    let thrust = 0;
+    if (thrusting) {
+      thrust = 2 * A * (P - PATM) * 0.9; // 0.9 = nozzle losses
+      const ve = Math.sqrt((2 * (P - PATM)) / RHO_W);
+      const dV = A * ve * dt;
+      water = Math.max(0, water - dV); Va += dV;
+      P = P0 * Math.pow(Va0 / Va, 1.4);
+      if (water <= 0 || P <= PATM) { burnout = t; burnoutV = v; }
+    }
+    // direction: along the rail while on it, then along the velocity (fins) or tumbling
+    const onRail = Math.hypot(x, y) < railLen;
+    const dir = onRail || v < 0.5 ? ang : Math.atan2(vy, vx);
+    const drag = 0.5 * RHO_A * cd * area * v * v;
+    const ax = (thrust * Math.cos(dir) - (v ? (drag * vx) / v : 0)) / m;
+    let ay = (thrust * Math.sin(dir) - (v ? (drag * vy) / v : 0)) / m - G;
+    if (onRail && y <= 0 && ay < 0 && !thrusting) ay = 0;
+    vx += ax * dt; vy += ay * dt; x += vx * dt; y += vy * dt; t += dt;
+    maxY = Math.max(maxY, y);
+    if (i % (thrusting ? 50 : 4) === 0) path.push({ t, x, y, thrust: thrusting });
+    if (y < 0 && t > 0.05) { y = 0; break; }
+  }
+  path.push({ t, x, y: 0, thrust: false });
+  return { path, apogee: maxY, range: x, flight: t, burnout: burnout ?? 0, burnoutV, waterMl: water0 * 1e6, dryG: +p.dryMassG };
+}
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  Bench.metrics({
+    stressRatio: Math.min(1.5, +p.targetM / Math.max(0.1, R.apogee)),
+    label: `apogee ${R.apogee.toFixed(1)} m · target ${p.targetM} m · lands ${R.range.toFixed(0)} m away`,
+    values: { apogeeM: +R.apogee.toFixed(1), rangeM: Math.round(R.range), flightS: +R.flight.toFixed(1) },
+  });
+}
+
+Bench.init({
+  params: { bottleL: "2", waterPct: 33, pressurePsi: 60, nozzleMm: 22, angleDeg: 85, dryMassG: 150, fins: true, targetM: 30 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, done: false, p: { ...p }, dur: Math.min(6, Math.max(2.5, R.flight * 0.8)) }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+    const prog = anim ? Math.min(1, (now - anim.t0) / anim.dur) : 1;
+    if (anim && !anim.done && prog >= 1) { anim.done = true; finish(anim.p); }
+    // slow-motion for the first fraction of a second so you can see the water burn
+    const tNow = anim ? R.flight * Math.pow(prog, 1.6) : R.flight;
+
+    D.text(`${p.bottleL} L bottle · ${p.waterPct}% water (${Math.round(R.waterMl)} ml) · ${p.pressurePsi} psi · ${p.nozzleMm} mm nozzle · ${p.angleDeg}° · ${p.fins ? "fins" : "no fins"}`, 18, 28, { size: 14 });
+    D.text(`burn ${(R.burnout * 1000).toFixed(0)} ms → ${R.burnoutV.toFixed(0)} m/s · apogee ${R.apogee.toFixed(1)} m · flight ${R.flight.toFixed(1)} s`, 18, 48, { size: 12, mono: true, color: C.ink2 });
+
+    const ground = H - 46, left = 70;
+    const maxX = Math.max(R.range, 5), maxY = Math.max(R.apogee, +p.targetM) * 1.15;
+    const sc = Math.min((W - left - 60) / maxX, (ground - 80) / maxY);
+    const X = (m) => left + m * sc, Y = (m) => ground - m * sc;
+    D.ground(20, W - 20, ground);
+
+    // altitude scale + target line
+    D.line(left - 30, ground, left - 30, Y(maxY), { width: 1, color: C.ink3 });
+    const stepM = maxY > 60 ? 20 : maxY > 25 ? 10 : 5;
+    for (let m = 0; m <= maxY; m += stepM) D.text(`${m}m`, left - 34, Y(m) + 4, { size: 10, mono: true, align: "right", color: C.ink3 });
+    D.line(left - 30, Y(+p.targetM), W - 30, Y(+p.targetM), { color: C.green, dash: [6, 4], width: 1.2, single: true });
+    D.text(`target ${p.targetM} m`, W - 34, Y(+p.targetM) - 6, { size: 11, color: C.green, align: "right" });
+
+    // launch pad
+    D.line(X(0) - 14, ground, X(0), ground - 16, { width: 1.4 }); D.line(X(0) + 14, ground, X(0), ground - 16, { width: 1.4 });
+
+    // trajectory so far (dotted), full ghost when idle
+    const pts = R.path.filter((pt) => pt.t <= tNow);
+    ctx.setLineDash([2, 4]); ctx.strokeStyle = anim ? C.navy : C.ink3; ctx.lineWidth = 1.5; ctx.beginPath();
+    (anim ? pts : R.path).forEach((pt, i) => (i ? ctx.lineTo(X(pt.x), Y(pt.y)) : ctx.moveTo(X(pt.x), Y(pt.y))));
+    ctx.stroke(); ctx.setLineDash([]);
+
+    // apogee marker
+    const top = R.path.reduce((a, b) => (b.y > a.y ? b : a), R.path[0]);
+    if (!anim || tNow >= top.t) { D.line(X(top.x) - 8, Y(top.y), X(top.x) + 8, Y(top.y), { color: C.red, width: 1.4, single: true }); D.text(`${R.apogee.toFixed(1)} m`, X(top.x) + 12, Y(top.y) + 4, { size: 12, mono: true, color: C.red }); }
+
+    // the rocket
+    const cur = anim ? pts[pts.length - 1] : R.path[0];
+    const nxt = anim ? R.path[Math.min(R.path.length - 1, R.path.indexOf(cur) + 1)] : R.path[1];
+    let heading = anim && cur.t > 0.05 ? Math.atan2(nxt.y - cur.y, nxt.x - cur.x) : (+p.angleDeg * Math.PI) / 180;
+    if (!p.fins && anim && cur.t > R.burnout + 0.1) heading += now * 9; // tumbling
+    drawRocket(D, X(cur.x), Y(cur.y), heading, anim && cur.t > R.burnout ? 0 : +p.waterPct, cur.thrust && anim);
+
+    if (anim && anim.done) D.stamp(R.apogee >= +p.targetM ? "LIFTOFF!" : "TOO LOW", W * 0.6, H * 0.35, R.apogee >= +p.targetM ? C.green : C.red);
+    if (!anim) D.text("(dotted line = predicted flight — press RUN TEST to launch)", 18, H - 12, { size: 11, color: C.ink3 });
+  },
+});
+
+function drawRocket(D, x, y, a, waterPct, spraying) {
+  const { ctx, C } = D;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(-a + Math.PI / 2);
+  // body points "up" (negative y) in local space
+  ctx.strokeStyle = C.ink; ctx.lineWidth = 1.6; ctx.fillStyle = C.paper;
+  ctx.beginPath(); ctx.moveTo(-7, 0); ctx.lineTo(-7, -30); ctx.quadraticCurveTo(-7, -42, 0, -46); ctx.quadraticCurveTo(7, -42, 7, -30); ctx.lineTo(7, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = C.blue; ctx.globalAlpha = 0.35; ctx.fillRect(-6, -30 * (waterPct / 100), 12, 30 * (waterPct / 100)); ctx.globalAlpha = 1;
+  ctx.beginPath(); ctx.moveTo(-7, -4); ctx.lineTo(-14, 4); ctx.lineTo(-7, 0); ctx.moveTo(7, -4); ctx.lineTo(14, 4); ctx.lineTo(7, 0); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-3, 0); ctx.lineTo(-3, 4); ctx.lineTo(3, 4); ctx.lineTo(3, 0); ctx.stroke();
+  if (spraying) {
+    ctx.strokeStyle = C.blue; ctx.lineWidth = 1.2;
+    for (let k = 0; k < 9; k++) { const s = (Math.random() - 0.5) * 0.7; ctx.beginPath(); ctx.moveTo(0, 6); ctx.lineTo(Math.sin(s) * 30, 6 + Math.cos(s) * (18 + Math.random() * 22)); ctx.stroke(); }
+  }
+  ctx.restore();
+}
+
+function finish(p) {
+  const desc = `${p.bottleL} L bottle, ${p.waterPct}% water, ${p.pressurePsi} psi, ${p.nozzleMm} mm nozzle, ${p.angleDeg}° launch, ${p.dryMassG} g dry, ${p.fins ? "with fins" : "no fins"}`;
+  const ok = R.apogee >= +p.targetM;
+  let why = `apogee ${R.apogee.toFixed(1)} m is below the ${p.targetM} m target`;
+  if (+p.waterPct > 60) why += "; too much water leaves little air to push it";
+  else if (+p.waterPct < 15) why += "; too little water means little thrust mass";
+  if (!p.fins) why += "; without fins it tumbles and drag triples";
+  Bench.result({
+    passed: ok,
+    summary: `${desc}: reached ${R.apogee.toFixed(1)} m high and landed ${R.range.toFixed(0)} m away after ${R.flight.toFixed(1)} s.`,
+    failureReason: ok ? undefined : why,
+    score: ok ? +R.apogee.toFixed(1) : undefined, scoreLabel: "apogee m",
+    metrics: { apogeeM: +R.apogee.toFixed(1), rangeM: Math.round(R.range), flightS: +R.flight.toFixed(1), burnoutMs: Math.round(R.burnout * 1000) },
+  });
+}
+</script>
+</body>
+</html>

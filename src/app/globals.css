@@ -204,9 +204,42 @@ body {
   transform-origin: 50% 90%;
   animation: pb-jiggle 0.75s cubic-bezier(0.3, 0.7, 0.4, 1) 1;
 }
+/* Walkthrough: the loop arrow draws itself, then the head pops on, the card drops in */
+.pb-tour-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: pb-tour-draw 0.7s 0.1s ease-out forwards;
+}
+@keyframes pb-tour-draw {
+  to { stroke-dashoffset: 0; }
+}
+.pb-tour-head {
+  opacity: 0;
+  animation: pb-fade-in 0.15s 0.75s ease-out forwards;
+}
+@keyframes pb-fade-in {
+  to { opacity: 1; }
+}
+.pb-tour-card {
+  animation: pb-card-in 0.28s cubic-bezier(0.3, 1.4, 0.5, 1) both;
+}
+@keyframes pb-card-in {
+  from { opacity: 0; transform: translateY(6px) rotate(-0.8deg); }
+  to { opacity: 1; transform: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .pb-jiggle {
+  .pb-jiggle,
+  .pb-tour-card {
     animation: none;
+  }
+  .pb-tour-draw {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  .pb-tour-head {
+    animation: none;
+    opacity: 1;
   }
 }
 

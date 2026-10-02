@@ -46,8 +46,26 @@ The tag and the `score=`/`params=` suffix let the app restore dials from recalle
 | Checkout Rush | Multi-lane checkout simulated second by second (Poisson arrivals, walkouts, express lane) with seeded randomness, so every configuration faces the same customers |
 | Off-Grid Solar | 10-minute energy balance over 1–3 days: battery, depth of discharge, panels, clouds, night load, load-shedding |
 | Launch & Swing | Projectile with quadratic drag on Earth/Moon/Mars, and a non-linear pendulum (numerically integrated) |
+| Outbreak | SIR epidemic in quarter-day steps: R0, vaccination, distancing from a chosen day, hospital beds vs demand, with a 200-person crowd that changes colour |
+| Stopping Distance | Reaction distance + braking distance (v²/2a) with road surface, worn tyres, ABS, slope and phone distraction; a child runs out and you see the impact speed |
+| Savings Goal | Month-by-month saving with compound interest, yearly raises, inflation (goal in today's money) and an emergency withdrawal |
+| Bottle Rocket | Water rocket: thrust 2A(P−Patm), adiabatic air expansion, quadratic drag, fins vs tumbling, apogee vs target |
 
 Each sim is a standalone HTML file in `public/sims/`, running in a sandboxed iframe (`sandbox="allow-scripts"`). It talks to the app over `postMessage` (`src/lib/protocol.ts`), so a generated sim can follow the same contract.
+
+## AI-built benches
+
+If none of the benches fit, describe your idea ("a rainwater tank for my house: roof size, rainfall, daily use") in the bench picker, or just tell the chat. The model calls `build_bench` and a new simulation appears with its own dials, in about 10–40 seconds.
+
+How it stays reliable with a 27B open model (`src/lib/sim-gen.ts`, `src/lib/sim-check.ts`):
+
+1. **One contract, one worked example.** The model writes a JSON spec (dials, brief, pass rule) and a small canvas script against the same protocol and drawing kit as the hand-built sims.
+2. **Strict parsing.** Dials are clamped into valid ranges and the code is compiled (`vm.Script`) to catch syntax errors with the exact line.
+3. **Headless smoke run.** The script runs in a Node `vm` with a fake canvas and clock and a 1.5 s CPU limit. It must start, publish metrics and finish a test, so crashes and infinite loops never reach a browser. The vm gets no host objects (null-prototype global, string code generation disabled), so the script can't reach `process`.
+4. **Physics review.** A second short model call hand-checks the sim's own result for its default settings. It caught a shelf bench reporting 23 mm of sag where the beam formula gives about 2.3 mm (a unit bug), so that bench gets rewritten.
+5. **Repair loop.** If a bench still crashes in the browser (`SIM_ERROR`, or no result within 25 s), the error goes back to the model, which fixes its own code, at most twice. In the chat, `revise_bench` changes a bench on request.
+
+Generated code only ever runs in the sandboxed iframe (opaque origin, no cookies) behind a CSP that blocks network access. Each bench belongs to one person. Building one is saved to Walrus Memory as a `[SIM]` memory, so the bot remembers what you built.
 
 ## Run it locally
 
@@ -63,7 +81,7 @@ Fill in `.env.local`:
 
 | Variable | Where to get it |
 |---|---|
-| `GROQ_API_KEY` | [console.groq.com](https://console.groq.com/keys) (free tier works) |
+| `GROQ_API_KEY` | [console.groq.com](https://console.groq.com/keys). The free tier works for trying it alone, but one key is shared by everyone using the app (about 8k tokens and 1k output tokens per minute). Use the Dev tier for real users |
 | `MEMWAL_ACCOUNT_ID`, `MEMWAL_PRIVATE_KEY` | [memory.walrus.xyz](https://memory.walrus.xyz): create an account and a delegate key |
 | `MEMWAL_SERVER_URL` | `https://relayer.memory.walrus.xyz` (mainnet) or `https://relayer-staging.memory.walrus.xyz` (testnet) |
 | `AUTH_SECRET` | any long random string: `openssl rand -hex 32` |
@@ -97,7 +115,11 @@ src/lib/memory.ts        Walrus Memory: client per user, tagged memory format, r
 src/lib/sims.ts          Bench registry (dial specs shared by the UI and the model's tools)
 src/lib/prompts.ts       System prompt (memory ON vs OFF)
 src/lib/llm.ts           Provider switch (Groq / OpenRouter / OpenAI-compatible)
-src/app/api/chat         Streaming chat: recall → model + tools (set_dials, remember, recall, switch_bench)
+src/lib/sim-gen.ts       AI-built benches: prompt contract, parsing, physics review, retry loop
+src/lib/sim-check.ts     Headless smoke run of generated sims in an isolated vm
+src/lib/sim-doc.ts       Wraps generated code in a CSP-locked document for the sandboxed iframe
+src/app/api/chat         Streaming chat: recall → model + tools (set_dials, remember, recall, switch_bench, build_bench, revise_bench)
+src/app/api/sims         Build / fetch / repair AI-built benches
 src/app/api/bootstrap    New sheet: recall, restore dials, welcome-back
 src/app/api/memories     Bench results → memory; memory ledger
 public/sims/*.html       Hand-built simulations + bench.js drawing kit

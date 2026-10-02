@@ -16,9 +16,13 @@ type Props = {
   theme: "light" | "dark";
   runSignal: number;
   onResult: (r: SimResult, params: Record<string, ParamValue>) => void;
+  /** AI-built sims: report crashes / hangs so the app can ask the AI to repair the code. */
+  onSimError?: (message: string) => void;
+  /** Shown over the drawing while an AI-built sim is being written or repaired. */
+  busyNote?: string | null;
 };
 
-export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKeys, theme, runSignal, onResult }: Props) {
+export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKeys, theme, runSignal, onResult, onSimError, busyNote }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false);
   const [metrics, setMetrics] = useState<SimMetrics | null>(null);
@@ -26,10 +30,17 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKe
   const [simError, setSimError] = useState<string | null>(null);
   const dialsRef = useRef(dials);
   const onResultRef = useRef(onResult);
+  const onSimErrorRef = useRef(onSimError);
   useEffect(() => {
     dialsRef.current = dials;
     onResultRef.current = onResult;
-  }, [dials, onResult]);
+    onSimErrorRef.current = onSimError;
+  }, [dials, onResult, onSimError]);
+  const reportError = (message: string) => {
+    setSimError(message);
+    setTesting(false);
+    onSimErrorRef.current?.(message);
+  };
 
   const post = (msg: HostToSim) => frame.current?.contentWindow?.postMessage(msg, "*");
 
@@ -48,10 +59,7 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKe
       else if (m.type === "SIM_RESULT") {
         setTesting(false);
         onResultRef.current(m.payload, dialsRef.current);
-      } else if (m.type === "SIM_ERROR") {
-        setSimError(m.message);
-        setTesting(false);
-      }
+      } else if (m.type === "SIM_ERROR") reportError(String(m.message).slice(0, 400));
     }
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
@@ -61,6 +69,18 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKe
   useEffect(() => {
     if (ready) post({ type: "UPDATE_PARAMS", params: dials });
   }, [dials, ready]);
+
+  // Watchdogs (only matter for AI-written sims, but cheap for all): never started / test never finished.
+  useEffect(() => {
+    if (ready || !srcDoc) return;
+    const t = setTimeout(() => reportError("the sim never started: Bench.init(...) did not run within 8 seconds"), 8000);
+    return () => clearTimeout(t);
+  }, [ready, srcDoc]);
+  useEffect(() => {
+    if (!testing) return;
+    const t = setTimeout(() => reportError("RUN TEST never finished: Bench.result(...) was not called within 25 seconds"), 25000);
+    return () => clearTimeout(t);
+  }, [testing]);
 
   useEffect(() => {
     if (ready) post({ type: "SET_THEME", theme });
@@ -86,7 +106,7 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKe
   return (
     <section className="flex flex-col h-full min-h-0">
       {/* drawing sheet */}
-      <div className="relative flex-1 min-h-[220px] m-3 mb-2 ink-box overflow-hidden bg-sheet">
+      <div data-tour="bench" className="relative flex-1 min-h-[220px] m-3 mb-2 ink-box overflow-hidden bg-sheet">
         <iframe
           ref={frame}
           key={sim.id + (srcDoc ? ":custom" : "")}
@@ -99,14 +119,22 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKe
         {!ready && !simError && (
           <div className="absolute inset-0 flex items-center justify-center hand text-ink-3 pulse">unrolling the drawing…</div>
         )}
-        {simError && (
+        {simError && !busyNote && (
           <div className="absolute bottom-2 left-2 right-2 sheet ink-box-soft p-2 text-[13px] text-red mono">sim error: {simError}</div>
         )}
-        <div className="absolute top-2 right-2 hand text-[12px] px-2 py-0.5 sheet ink-box-soft text-ink-2">{sim.name}</div>
+        {busyNote && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-sheet/85 text-center px-6">
+            <span className="hand text-[18px] pulse">{busyNote}</span>
+          </div>
+        )}
+        <div className="absolute top-2 right-2 hand text-[12px] px-2 py-0.5 sheet ink-box-soft text-ink-2">
+          {sim.custom && <span className="text-navy">✦ AI-built · </span>}
+          {sim.name}
+        </div>
       </div>
 
       {/* tactile control deck */}
-      <div className="mx-3 mb-3 sheet ink-box flex max-h-[46%] min-h-[150px]">
+      <div data-tour="controls" className="mx-3 mb-3 sheet ink-box flex max-h-[46%] min-h-[150px]">
         <div className="flex-1 min-w-0 overflow-y-auto px-3 pt-2 pb-3">
           <div className="flex items-center justify-between mb-1">
             <span className="hand text-[15px]">Control panel</span>
@@ -129,7 +157,7 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKe
             </div>
           </div>
         </div>
-        <div className="w-[150px] shrink-0 border-l border-dashed border-ink/30 flex flex-col items-center justify-center gap-2 py-2">
+        <div data-tour="run" className="w-[150px] shrink-0 border-l border-dashed border-ink/30 flex flex-col items-center justify-center gap-2 py-2">
           <StressGauge ratio={metrics?.stressRatio ?? 0} label={metrics?.label} />
           <RunButton
             running={testing}

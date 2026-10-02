@@ -2,7 +2,8 @@ import { z } from "zod";
 import { errorResponse, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { MEMORY_KINDS, memoryCount, memoryFor, remember } from "@/lib/memory";
-import { getSim, sanitizeParams } from "@/lib/sims";
+import { sanitizeParams } from "@/lib/sims";
+import { resolveSim } from "@/lib/sims-server";
 
 /** Audit log of what this user has sent to Walrus Memory, plus the relayer's own count. */
 export async function GET() {
@@ -71,7 +72,7 @@ export async function POST(req: Request) {
     }
 
     const b = SimResultBody.parse(raw);
-    const sim = getSim(b.simId);
+    const sim = await resolveSim(user, b.simId);
     if (!sim) return Response.json({ error: "Unknown bench" }, { status: 400 });
     const { params } = sanitizeParams(sim.params, b.params);
     const recent = (await db.listMemLog(user.id, 200)).filter((m) => m.sim_id === sim.id && m.status !== "failed");

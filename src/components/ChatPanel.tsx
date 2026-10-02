@@ -20,6 +20,8 @@ type Props = {
   registerApi: (api: ChatApi | null) => void;
   onSetDials: (o: { simId: string; params: Record<string, ParamValue>; runTest: boolean }) => void;
   onSwitchBench: (simId: string) => void;
+  /** The AI built a new bench or changed the current one: load its code and open it. */
+  onBenchChanged: (simId: string) => void;
   onMemoryChanged: () => void;
   onFinished: () => void;
 };
@@ -52,6 +54,9 @@ export default function ChatPanel(props: Props) {
           props.onSetDials({ simId: String(p.output.simId), params: (p.output.params ?? {}) as Record<string, ParamValue>, runTest: Boolean(p.output.runTest) });
         } else if (p.type === "tool-switch_bench" && p.output) {
           props.onSwitchBench(String(p.output.simId));
+        } else if ((p.type === "tool-build_bench" && p.output?.built) || (p.type === "tool-revise_bench" && p.output?.revised)) {
+          props.onBenchChanged(String(p.output.simId));
+          props.onMemoryChanged();
         } else if (p.type === "tool-remember") {
           props.onMemoryChanged();
         }
@@ -114,6 +119,7 @@ export default function ChatPanel(props: Props) {
           e.preventDefault();
           submit(input);
         }}
+        data-tour="chat"
         className="m-3 mt-0 sheet ink-box flex items-end gap-2 p-2"
       >
         <textarea

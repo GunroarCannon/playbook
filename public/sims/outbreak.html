@@ -1,0 +1,151 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Outbreak Bench — SIR model with vaccination, distancing from a given day, and hospital demand.
+ * Quarter-day steps. Hospital demand = currently infected x share who need a bed.
+ */
+const REDUCTION = { none: 0, mild: 0.3, strict: 0.6 };
+function simulate(p) {
+  const N = +p.populationK * 1000;
+  const D = +p.infectiousDays, gamma = 1 / D;
+  const v = +p.vaccinatedPct / 100;
+  let I = Math.min(N, +p.initialCases), R = N * v, S = Math.max(0, N - I - R);
+  const beds = (+p.bedsPer1000 / 1000) * N, hosp = +p.hospitalPct / 100;
+  const dt = 0.25, steps = Math.round(+p.days / dt);
+  const series = [];
+  let peakI = I, peakDay = 0, overDays = 0, firstOver = null;
+  for (let k = 0; k <= steps; k++) {
+    const day = k * dt;
+    const cut = day >= +p.distancingDay ? REDUCTION[p.distancing] ?? 0 : 0;
+    const beta = (+p.r0 / D) * (1 - cut);
+    if (k % 2 === 0) series.push({ day, S, I, R, H: I * hosp });
+    if (I > peakI) { peakI = I; peakDay = day; }
+    if (I * hosp > beds) { overDays += dt; if (firstOver == null) firstOver = day; }
+    const newInf = Math.min(S, (beta * S * I) / N * dt), rec = gamma * I * dt;
+    S -= newInf; I += newInf - rec; R += rec;
+  }
+  const everInfected = N - S - N * v;
+  return { N, series, peakI, peakDay, peakH: peakI * hosp, beds, overDays, firstOver, attack: everInfected / N, rEff: +p.r0 * (1 - v) };
+}
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  Bench.metrics({
+    stressRatio: R.beds > 0 ? R.peakH / R.beds : 2,
+    label: `peak ${Math.round(R.peakH).toLocaleString()} beds needed / ${Math.round(R.beds).toLocaleString()} · ${(R.attack * 100).toFixed(0)}% infected`,
+    values: { peakBeds: Math.round(R.peakH), beds: Math.round(R.beds), attackPct: Math.round(R.attack * 100) },
+  });
+}
+
+// 200-person crowd: each dot gets a fixed "when would I be infected" rank so the crowd mirrors the curves.
+const CROWD = 200;
+const order = (() => { const r = Bench.D.rng(99); return Array.from({ length: CROWD }, (_, i) => ({ i, k: r() })).sort((a, b) => a.k - b.k).map((o) => o.i); })();
+
+Bench.init({
+  params: { populationK: 100, r0: 2.5, infectiousDays: 7, initialCases: 10, vaccinatedPct: 0, distancing: "none", distancingDay: 20, hospitalPct: 5, bedsPer1000: 2.5, days: 180 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, dur: 6, done: false, p: { ...p } }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+    const prog = anim ? Math.min(1, (now - anim.t0) / anim.dur) : 1;
+    if (anim && !anim.done && prog >= 1) { anim.done = true; finish(anim.p); }
+    const n = R.series.length, upto = Math.max(1, Math.floor(prog * (n - 1)));
+    const cur = R.series[upto];
+
+    D.text(`Outbreak · ${(+p.populationK).toLocaleString()}k people · R0 ${p.r0} · ${p.vaccinatedPct}% vaccinated${p.distancing !== "none" ? ` · ${p.distancing} distancing from day ${p.distancingDay}` : ""}`, 18, 28, { size: 14 });
+    D.text(`day ${Math.round(cur.day)} · effective R at start ${R.rEff.toFixed(2)}`, 18, 48, { size: 12, mono: true, color: C.ink2 });
+
+    // ---- crowd of dots (right) ----
+    const cw = Math.min(220, W * 0.3), cols = 20, cell = cw / cols, cx0 = W - cw - 20, cy0 = 70;
+    const inf = Math.round((cur.I / R.N) * CROWD), rec = Math.round(((cur.R) / R.N) * CROWD);
+    const vacc = Math.round((+p.vaccinatedPct / 100) * CROWD);
+    for (let j = 0; j < CROWD; j++) {
+      const idx = order[j];
+      const x = cx0 + (idx % cols) * cell + cell / 2, y = cy0 + Math.floor(idx / cols) * cell + cell / 2;
+      // first `vacc` in order are vaccinated; then recovered; then infected; rest susceptible
+      let col = C.blue, fill = false;
+      if (j < vacc) { col = C.green; fill = true; }
+      else if (j < rec) col = C.green;
+      else if (j < rec + inf) { col = C.red; fill = true; }
+      ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(x, y, cell * 0.3, 0, Math.PI * 2); fill ? ctx.fill() : ctx.stroke();
+    }
+    const ly = cy0 + (CROWD / cols) * cell + 16;
+    [["healthy", C.blue, false], ["sick", C.red, true], ["recovered / vaccinated", C.green, false]].forEach(([t, c, f], i) => {
+      ctx.strokeStyle = c; ctx.fillStyle = c; ctx.beginPath(); ctx.arc(cx0 + 5, ly + i * 16 - 4, 4, 0, Math.PI * 2); f ? ctx.fill() : ctx.stroke();
+      D.text(t, cx0 + 14, ly + i * 16, { size: 11 });
+    });
+    D.text("1 dot = " + Math.round(R.N / CROWD).toLocaleString() + " people", cx0, ly + 52, { size: 10, mono: true, color: C.ink3 });
+
+    // ---- curves (left) ----
+    const gx = 60, gw = Math.max(200, cx0 - gx - 40), gyTop = 70, gh = Math.max(90, (H - 160) * 0.55), gy = gyTop + gh;
+    D.line(gx, gy, gx + gw, gy, { width: 1.3 }); D.line(gx, gy, gx, gyTop, { width: 1.3 });
+    D.text("share of people", gx - 6, gyTop - 6, { size: 10, color: C.ink3 });
+    const X = (i) => gx + (i / (n - 1)) * gw;
+    const curve = (key, col, w) => {
+      ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath();
+      for (let i = 0; i <= upto; i++) { const y = gy - (R.series[i][key] / R.N) * gh; i ? ctx.lineTo(X(i), y) : ctx.moveTo(X(i), y); }
+      ctx.stroke();
+    };
+    curve("S", C.blue, 1.6); curve("R", C.green, 1.6); curve("I", C.red, 2.6);
+    for (let d = 0; d <= +p.days; d += 30) D.text(`d${d}`, gx + (d / +p.days) * gw, gy + 14, { size: 10, mono: true, align: "center", color: C.ink3 });
+    if (p.distancing !== "none" && +p.distancingDay <= +p.days) {
+      const x = gx + (+p.distancingDay / +p.days) * gw;
+      D.line(x, gy, x, gyTop, { dash: [4, 4], width: 1, color: C.navy, single: true });
+      D.text(`${p.distancing} distancing`, x + 4, gyTop + 12, { size: 11, color: C.navy });
+    }
+
+    // ---- hospital panel ----
+    const hy = gy + 34, hh = Math.max(50, H - hy - 40);
+    const maxH = Math.max(R.beds * 1.6, R.peakH * 1.1, 1);
+    D.line(gx, hy + hh, gx + gw, hy + hh, { width: 1.3 }); D.line(gx, hy + hh, gx, hy, { width: 1.3 });
+    D.text("hospital beds needed", gx - 6, hy - 4, { size: 10, color: C.ink3 });
+    const bedY = hy + hh - (R.beds / maxH) * hh;
+    ctx.beginPath(); ctx.moveTo(X(0), hy + hh);
+    for (let i = 0; i <= upto; i++) ctx.lineTo(X(i), hy + hh - (R.series[i].H / maxH) * hh);
+    ctx.lineTo(X(upto), hy + hh); ctx.closePath();
+    ctx.fillStyle = C.amber; ctx.globalAlpha = 0.22; ctx.fill(); ctx.globalAlpha = 1;
+    ctx.save(); ctx.beginPath(); ctx.rect(gx, hy - 2, gw, bedY - hy + 2); ctx.clip();
+    ctx.beginPath(); ctx.moveTo(X(0), hy + hh);
+    for (let i = 0; i <= upto; i++) ctx.lineTo(X(i), hy + hh - (R.series[i].H / maxH) * hh);
+    ctx.lineTo(X(upto), hy + hh); ctx.closePath(); ctx.fillStyle = C.red; ctx.globalAlpha = 0.45; ctx.fill(); ctx.restore(); ctx.globalAlpha = 1;
+    D.line(gx, bedY, gx + gw, bedY, { color: C.red, dash: [6, 4], width: 1.3, single: true });
+    D.text(`${Math.round(R.beds).toLocaleString()} beds`, gx + gw - 2, bedY - 5, { size: 11, color: C.red, align: "right" });
+
+    if (anim && anim.done) D.stamp(pass() ? "CURVE FLATTENED" : "HOSPITALS OVERRUN", gx + gw * 0.55, gyTop + gh * 0.35, pass() ? C.green : C.red);
+    if (!anim) D.text("(projection — press RUN TEST to play the outbreak)", gx, H - 12, { size: 11, color: C.ink3 });
+  },
+});
+
+function pass() { return R.peakH <= R.beds; }
+
+function finish(p) {
+  const desc = `R0 ${p.r0}, ${p.infectiousDays}-day illness, ${p.vaccinatedPct}% vaccinated, ${p.distancing === "none" ? "no distancing" : `${p.distancing} distancing from day ${p.distancingDay}`}, ${p.hospitalPct}% need a bed, ${p.bedsPer1000} beds per 1000, ${(+p.populationK).toLocaleString()}k people`;
+  const stats = `peak ${Math.round(R.peakH).toLocaleString()} beds needed on day ${Math.round(R.peakDay)} vs ${Math.round(R.beds).toLocaleString()} available; ${(R.attack * 100).toFixed(0)}% caught it`;
+  const ok = pass();
+  Bench.result({
+    passed: ok,
+    summary: `${desc}: ${stats}.`,
+    failureReason: ok ? undefined : `hospitals were over capacity for ${Math.round(R.overDays)} days starting day ${Math.round(R.firstOver)}`,
+    score: ok ? Math.round(100 - R.attack * 100) : undefined, scoreLabel: "% never infected",
+    metrics: { peakBeds: Math.round(R.peakH), beds: Math.round(R.beds), peakDay: Math.round(R.peakDay), attackPct: Math.round(R.attack * 100) },
+  });
+}
+</script>
+</body>
+</html>

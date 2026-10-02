@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import { errorResponse, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { getSim } from "@/lib/sims";
+import { resolveSim } from "@/lib/sims-server";
 
 export async function GET() {
   try {
@@ -20,7 +20,7 @@ export async function POST(req: Request) {
       id: nanoid(12),
       user_id: user.id,
       title: "New sheet",
-      sim_id: getSim(simId ?? "")?.id ?? "truss",
+      sim_id: (await resolveSim(user, simId))?.id ?? "truss",
       memory_on: memoryOn ?? true,
       messages: [],
     });

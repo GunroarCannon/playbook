@@ -47,13 +47,17 @@ export type MemLog = {
   created_at: string;
 };
 
+/** An AI-built bench. title = bench name, description = tagline, code = the sim script (see sim-gen.ts). */
 export type CustomSim = {
   id: string;
   user_id: string;
   title: string;
   description: string;
-  html: string;
+  brief: string;
+  prompt: string;
+  code: string;
   params: unknown[];
+  version: number;
   created_at: string;
 };
 
@@ -115,6 +119,11 @@ function ensureSchema() {
       params JSONB NOT NULL DEFAULT '[]'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )`;
+    // v2: custom sims store the generated script + brief (html column kept for old rows)
+    await sql`ALTER TABLE custom_sims ADD COLUMN IF NOT EXISTS brief TEXT NOT NULL DEFAULT ''`;
+    await sql`ALTER TABLE custom_sims ADD COLUMN IF NOT EXISTS prompt TEXT NOT NULL DEFAULT ''`;
+    await sql`ALTER TABLE custom_sims ADD COLUMN IF NOT EXISTS code TEXT NOT NULL DEFAULT ''`;
+    await sql`ALTER TABLE custom_sims ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 1`;
     await sql`CREATE INDEX IF NOT EXISTS threads_user_idx ON threads(user_id, updated_at DESC)`;
     await sql`CREATE INDEX IF NOT EXISTS memlog_user_idx ON memlog(user_id, created_at DESC)`;
   })();
@@ -334,17 +343,37 @@ export const db = {
     );
   },
 
-  async createCustomSim(s: Omit<CustomSim, "created_at">): Promise<CustomSim> {
+  async createCustomSim(s: Omit<CustomSim, "created_at" | "version">): Promise<CustomSim> {
     if (sql) {
       await ensureSchema();
-      const rows = await sql`INSERT INTO custom_sims (id, user_id, title, description, html, params)
-        VALUES (${s.id}, ${s.user_id}, ${s.title}, ${s.description}, ${s.html}, ${JSON.stringify(s.params)}::jsonb)
-        RETURNING *`;
+      const rows = await sql`INSERT INTO custom_sims (id, user_id, title, description, html, brief, prompt, code, params)
+        VALUES (${s.id}, ${s.user_id}, ${s.title}, ${s.description}, '', ${s.brief}, ${s.prompt}, ${s.code}, ${JSON.stringify(s.params)}::jsonb)
+        RETURNING id, user_id, title, description, brief, prompt, code, params, version, created_at`;
       return iso(rows[0] as CustomSim);
     }
     return withFile((t) => {
-      const row = { ...s, created_at: now() };
+      const row = { ...s, version: 1, created_at: now() };
       t.custom_sims.push(row);
+      return row;
+    }, true);
+  },
+
+  async updateCustomSim(userId: string, id: string, patch: Partial<Pick<CustomSim, "title" | "description" | "brief" | "code" | "params">>) {
+    if (sql) {
+      await ensureSchema();
+      const cur = await this.getCustomSim(userId, id);
+      if (!cur) return null;
+      const n = { ...cur, ...patch };
+      const rows = await sql`UPDATE custom_sims SET title = ${n.title}, description = ${n.description}, brief = ${n.brief},
+          code = ${n.code}, params = ${JSON.stringify(n.params)}::jsonb, version = version + 1
+        WHERE id = ${id} AND user_id = ${userId}
+        RETURNING id, user_id, title, description, brief, prompt, code, params, version, created_at`;
+      return rows[0] ? iso(rows[0] as CustomSim) : null;
+    }
+    return withFile((t) => {
+      const row = t.custom_sims.find((x) => x.id === id && x.user_id === userId);
+      if (!row) return null;
+      Object.assign(row, patch, { version: (row.version ?? 1) + 1 });
       return row;
     }, true);
   },
@@ -352,24 +381,26 @@ export const db = {
   async getCustomSim(userId: string, id: string): Promise<CustomSim | null> {
     if (sql) {
       await ensureSchema();
-      const rows = await sql`SELECT * FROM custom_sims WHERE id = ${id} AND user_id = ${userId}`;
+      const rows = await sql`SELECT id, user_id, title, description, brief, prompt, code, params, version, created_at
+        FROM custom_sims WHERE id = ${id} AND user_id = ${userId}`;
       return rows[0] ? iso(rows[0] as CustomSim) : null;
     }
     return withFile((t) => t.custom_sims.find((x) => x.id === id && x.user_id === userId) ?? null);
   },
 
-  async listCustomSims(userId: string): Promise<Omit<CustomSim, "html">[]> {
+  async listCustomSims(userId: string): Promise<Omit<CustomSim, "code">[]> {
     if (sql) {
       await ensureSchema();
-      const rows = await sql`SELECT id, user_id, title, description, params, created_at
+      const rows = await sql`SELECT id, user_id, title, description, brief, prompt, params, version, created_at
         FROM custom_sims WHERE user_id = ${userId} ORDER BY created_at DESC`;
       return rows.map((r) => iso(r as CustomSim));
     }
     return withFile((t) =>
       t.custom_sims
         .filter((x) => x.user_id === userId)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        .map(({ html, ...rest }) => rest),
+        .map(({ code, ...rest }) => rest),
     );
   },
 };

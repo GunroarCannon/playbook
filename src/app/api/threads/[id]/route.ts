@@ -1,6 +1,6 @@
 import { errorResponse, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { getSim } from "@/lib/sims";
+import { resolveSim } from "@/lib/sims-server";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -23,7 +23,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
     const body = (await req.json()) as { title?: string; simId?: string; memoryOn?: boolean };
     await db.updateThread(user.id, id, {
       ...(body.title ? { title: body.title.slice(0, 80) } : {}),
-      ...(body.simId && getSim(body.simId) ? { sim_id: body.simId } : {}),
+      ...(body.simId && (await resolveSim(user, body.simId)) ? { sim_id: body.simId } : {}),
       ...(typeof body.memoryOn === "boolean" ? { memory_on: body.memoryOn } : {}),
     });
     return Response.json({ ok: true });

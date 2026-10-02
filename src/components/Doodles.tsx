@@ -224,7 +224,78 @@ export function KnifeSwitch({ size = 64, ...props }: P) {
 
 export const DOODLES = { Gear, Flask, Atom, Pendulum, Crane, Bulb, SetSquare, Compass, Balance, Gauge, KnifeSwitch };
 
+export function Virus({ size = 64, ...props }: P) {
+  const spikes = Array.from({ length: 10 }, (_, i) => (i * Math.PI * 2) / 10);
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <circle cx="50" cy="50" r="24" />
+      {spikes.map((t, i) => (
+        <g key={i}>
+          <line x1={r2(50 + 24 * Math.cos(t))} y1={r2(50 + 24 * Math.sin(t))} x2={r2(50 + 36 * Math.cos(t))} y2={r2(50 + 36 * Math.sin(t))} />
+          <circle cx={r2(50 + 39 * Math.cos(t))} cy={r2(50 + 39 * Math.sin(t))} r="3.5" />
+        </g>
+      ))}
+      <circle cx="42" cy="44" r="4" />
+      <circle cx="57" cy="56" r="5" />
+      <circle cx="56" cy="40" r="2.5" />
+    </svg>
+  );
+}
+
+export function Car({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <path d="M8 66 V52 Q8 48 13 47 L28 45 L38 32 Q40 30 44 30 H66 Q70 30 72 33 L80 45 L90 48 Q93 49 93 53 V66 Z" />
+      <path d="M41 45 L47 35 H58 V45 Z M63 45 V35 H69 L75 45 Z" />
+      <circle cx="28" cy="67" r="9" fill="var(--sheet)" />
+      <circle cx="73" cy="67" r="9" fill="var(--sheet)" />
+      <circle cx="28" cy="67" r="3" />
+      <circle cx="73" cy="67" r="3" />
+      <path d="M2 84 H40 M50 84 H62 M70 84 H98" strokeDasharray="0" />
+    </svg>
+  );
+}
+
+export function CoinJar({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <rect x="30" y="10" width="40" height="10" rx="2" />
+      <path d="M33 20 Q22 26 22 40 V82 Q22 90 30 90 H70 Q78 90 78 82 V40 Q78 26 67 20" />
+      <ellipse cx="40" cy="78" rx="9" ry="4" />
+      <ellipse cx="60" cy="78" rx="9" ry="4" />
+      <ellipse cx="50" cy="70" rx="9" ry="4" />
+      <ellipse cx="44" cy="62" rx="9" ry="4" />
+      <path d="M44 4 V8 M52 2 V8 M60 4 V8" />
+    </svg>
+  );
+}
+
+export function Rocket({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <path d="M50 6 Q62 16 62 32 V68 H38 V32 Q38 16 50 6 Z" />
+      <path d="M38 52 L26 68 V76 L38 70 M62 52 L74 68 V76 L62 70" />
+      <path d="M45 68 V74 H55 V68" />
+      <path d="M40 46 H60" strokeDasharray="3 3" />
+      <path d="M44 80 Q42 88 46 94 M50 80 V96 M56 80 Q58 88 54 94" opacity="0.7" />
+    </svg>
+  );
+}
+
+export function MagicFlask({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <path d="M38 14 H58 M42 14 V40 L22 78 Q19 86 28 86 H68 Q77 86 74 78 L54 40 V14" />
+      <path d="M30 66 Q48 60 66 66" />
+      <path d="M78 10 L81 19 L90 22 L81 25 L78 34 L75 25 L66 22 L75 19 Z" />
+      <path d="M14 30 L16 35 L21 37 L16 39 L14 44 L12 39 L7 37 L12 35 Z" />
+    </svg>
+  );
+}
+
 export function BenchIcon({ simId, size = 28, ...props }: P & { simId: string }) {
-  const Icon = { truss: Crane, queue: Balance, solar: Bulb, projectile: Pendulum }[simId] ?? Flask;
+  const Icon =
+    { truss: Crane, queue: Balance, solar: Bulb, projectile: Pendulum, outbreak: Virus, braking: Car, savings: CoinJar, rocket: Rocket }[simId] ??
+    (simId.startsWith("c-") ? MagicFlask : Flask);
   return <Icon size={size} {...props} />;
 }
