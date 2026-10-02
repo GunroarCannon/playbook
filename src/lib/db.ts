@@ -146,6 +146,8 @@ async function readFile(): Promise<Tables> {
 
 function withFile<R>(fn: (t: Tables) => R | Promise<R>, write = false): Promise<R> {
   const run = fileLock.then(async () => {
+    // Serverless filesystems are read-only, so the file store only works locally.
+    if (process.env.VERCEL) throw new Error("No database configured: set DATABASE_URL (e.g. add Neon in the Vercel dashboard).");
     const t = await readFile();
     const r = await fn(t);
     if (write) {
