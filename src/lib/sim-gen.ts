@@ -256,7 +256,8 @@ async function physicsReview(spec: GeneratedSim["spec"], defaults: Record<string
         "You check simulation results for physical and mathematical plausibility with a quick back-of-envelope calculation for the given settings. " +
         "Be terse: at most 5 short plain-text lines of arithmetic, no LaTeX, no markdown, no headings. " +
         'The LAST line must be exactly "VERDICT: OK" or "VERDICT: WRONG - <roughly what the key number should be, and the likely bug, e.g. a unit mix-up>". ' +
-        "Only say WRONG if the key number is off by more than about 3x or the pass/fail is clearly wrong.",
+        "Only say WRONG if the key number is off by more than 3x (a unit or formula bug). Differences under 3x are OK, " +
+        "and so is a pass/fail that flips because the value is close to the target. Never say WRONG just because your own estimate differs a little.",
       prompt: `Bench: ${spec.name}\nModel: ${spec.brief}\nSettings: ${JSON.stringify(defaults)}\nThe simulation reported: ${summary}\nMetrics: ${JSON.stringify(metrics ?? {})}`,
     });
     const verdict = stripThinking(text).match(/VERDICT:\s*(OK|WRONG[^\n]*)/i)?.[1] ?? "OK";
