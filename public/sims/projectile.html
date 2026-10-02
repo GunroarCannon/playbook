@@ -1,0 +1,204 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/* Launch & Swing Bench — projectile with optional quadratic drag, and a non-linear pendulum. */
+const G = { earth: 9.81, moon: 1.62, mars: 3.71 };
+const RHO_AIR = { earth: 1.2, moon: 0, mars: 0.02 };
+
+function flight(p) {
+  const g = G[p.gravity] ?? 9.81, rho = p.drag ? RHO_AIR[p.gravity] ?? 1.2 : 0;
+  const m = +p.massKg, r = Math.cbrt((3 * m) / (4 * Math.PI * 1000)); // water-density ball
+  const k = (0.5 * rho * 0.47 * Math.PI * r * r) / m;
+  const a = (+p.angleDeg * Math.PI) / 180;
+  let x = 0, y = +p.heightM, vx = +p.speed * Math.cos(a), vy = +p.speed * Math.sin(a), t = 0, maxY = y;
+  const pts = [{ x, y, t }];
+  const dt = 0.002;
+  while (t < 120) {
+    const v = Math.hypot(vx, vy);
+    vx += -k * v * vx * dt; vy += (-g - k * v * vy) * dt;
+    x += vx * dt; y += vy * dt; t += dt;
+    maxY = Math.max(maxY, y);
+    if (y <= 0) { const f = y / (vy * dt); x -= vx * dt * f; y = 0; pts.push({ x, y, t }); break; }
+    if (pts.length < 4000 && Math.round(t / dt) % 10 === 0) pts.push({ x, y, t });
+  }
+  const tol = Math.max(1, 0.05 * +p.targetM);
+  const err = x - +p.targetM;
+  return { pts, range: x, maxY, tof: t, err, tol, hit: Math.abs(err) <= tol, radius: r };
+}
+
+function swing(p) {
+  const g = G[p.gravity] ?? 9.81, L = +p.lengthM, th0 = (+p.amplitudeDeg * Math.PI) / 180;
+  let th = th0, w = 0, t = 0, crossings = [], prev = th;
+  const dt = 0.0005;
+  while (t < 60 && crossings.length < 3) {
+    // RK2
+    const a1 = (-g / L) * Math.sin(th);
+    const thm = th + w * dt / 2, wm = w + a1 * dt / 2;
+    const a2 = (-g / L) * Math.sin(thm);
+    th += wm * dt; w += a2 * dt; t += dt;
+    if (prev > 0 && th <= 0) crossings.push(t - (th / (th - prev)) * dt);
+    prev = th;
+  }
+  const period = crossings.length >= 2 ? crossings[1] - crossings[0] : NaN;
+  const small = 2 * Math.PI * Math.sqrt(L / g);
+  const err = (period - +p.targetPeriodS) / +p.targetPeriodS;
+  return { period, small, err, hit: Math.abs(err) <= 0.02, g, L, th0 };
+}
+
+let R = null, anim = null;
+function publish(p) {
+  if (p.mode === "pendulum") {
+    R = { kind: "pendulum", ...swing(p) };
+    Bench.metrics({ stressRatio: Math.abs(R.err) / 0.02 / 1.5, label: `period ${R.period.toFixed(3)} s (target ${(+p.targetPeriodS).toFixed(2)} s)`, values: { periodS: +R.period.toFixed(3) } });
+  } else {
+    R = { kind: "projectile", ...flight(p) };
+    Bench.metrics({ stressRatio: Math.min(1.5, Math.abs(R.err) / R.tol / 1.5), label: `lands at ${R.range.toFixed(1)} m (target ${p.targetM} m)`, values: { rangeM: +R.range.toFixed(2), errorM: +R.err.toFixed(2) } });
+  }
+}
+
+Bench.init({
+  params: { mode: "projectile", gravity: "earth", angleDeg: 45, speed: 20, heightM: 0, massKg: 1, drag: false, targetM: 40, lengthM: 1, amplitudeDeg: 15, targetPeriodS: 2 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, done: false, p: { ...p } }; },
+  draw(D, p, dt, now) {
+    if (!R || R.kind !== (p.mode === "pendulum" ? "pendulum" : "projectile")) publish(p);
+    D.grid();
+    if (R.kind === "pendulum") drawPendulum(D, p, now); else drawProjectile(D, p, now);
+  },
+});
+
+function drawProjectile(D, p, now) {
+  const { ctx, C } = D;
+  const W = D.W, H = D.H;
+  const span = Math.max(R.range, +p.targetM, 10) * 1.12;
+  const tall = Math.max(R.maxY, +p.heightM, 5) * 1.15;
+  const sc = Math.min((W - 110) / span, (H - 150) / tall);
+  const ox = 60, oy = H - 60;
+  const X = (x) => ox + x * sc, Y = (y) => oy - y * sc;
+
+  D.text(`${p.speed} m/s at ${p.angleDeg}° from ${p.heightM} m · ${p.gravity}${p.drag ? " · with air drag" : " · no drag"} · ${p.massKg} kg`, 18, 30, { size: 14 });
+  D.ground(20, W - 20, oy);
+  // distance scale
+  const stepM = niceStep(span / 8);
+  for (let m = 0; m <= span; m += stepM) { D.line(X(m), oy, X(m), oy + 6, { width: 1, single: true }); D.text(`${m}`, X(m), oy + 18, { size: 10, mono: true, align: "center", color: C.ink3 }); }
+  D.text("m", X(span) + 8, oy + 18, { size: 10, mono: true, color: C.ink3 });
+  // launch tower
+  if (+p.heightM > 0) D.rect(X(0) - 14, Y(+p.heightM), 28, +p.heightM * sc, { hatch: true, seed: 31 });
+  // cannon
+  const a = (+p.angleDeg * Math.PI) / 180, cx = X(0), cy = Y(+p.heightM);
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(-a);
+  D.rect(-6, -7, 38, 14, { seed: 41, fill: C.paper });
+  ctx.restore();
+  D.circle(cx, cy + 4, 9, { seed: 42 });
+  // angle arc
+  ctx.strokeStyle = C.ink2; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cx, cy, 46, -a, 0); ctx.stroke();
+  D.text(`${p.angleDeg}°`, cx + 50, cy - 6, { size: 11, mono: true, color: C.ink2 });
+  // target flag + tolerance band
+  const tx = X(+p.targetM);
+  ctx.fillStyle = C.green; ctx.globalAlpha = 0.12; ctx.fillRect(X(+p.targetM - R.tol), oy - 4, 2 * R.tol * sc, 8); ctx.globalAlpha = 1;
+  D.line(tx, oy, tx, oy - 46, { width: 1.6 });
+  ctx.fillStyle = C.red; ctx.beginPath(); ctx.moveTo(tx, oy - 46); ctx.lineTo(tx + 20, oy - 39); ctx.lineTo(tx, oy - 32); ctx.fill();
+  D.text(`target ${p.targetM} m`, tx, oy - 52, { size: 12, align: "center" });
+
+  // predicted path (faint dashed) or animated flight
+  const pts = R.pts;
+  let n = pts.length;
+  if (anim) {
+    const T = R.tof, el = (now - anim.t0) * Math.max(1, T / 3.5); // compress long flights to ~3.5s
+    n = Math.max(2, pts.findIndex((q) => q.t > el)); if (n < 2 || el >= T) n = pts.length;
+    if (el >= T && !anim.done) { anim.done = true; finishProjectile(p); }
+  }
+  ctx.setLineDash(anim ? [] : [4, 5]); ctx.strokeStyle = anim ? C.navy : C.ink3; ctx.lineWidth = anim ? 2 : 1.2;
+  ctx.beginPath(); pts.slice(0, n).forEach((q, i) => (i ? ctx.lineTo(X(q.x), Y(q.y)) : ctx.moveTo(X(q.x), Y(q.y)))); ctx.stroke(); ctx.setLineDash([]);
+  if (anim) { const q = pts[n - 1]; D.circle(X(q.x), Y(q.y), 6, { fill: C.ink, seed: 3 }); }
+  // apex note
+  const apex = pts.reduce((a, b) => (b.y > a.y ? b : a), pts[0]);
+  if (!anim || anim.done) D.text(`apex ${apex.y.toFixed(1)} m`, X(apex.x), Y(apex.y) - 10, { size: 11, mono: true, align: "center", color: C.ink2 });
+  if (anim && anim.done) {
+    D.text(`landed ${R.range.toFixed(1)} m (${R.err >= 0 ? "+" : ""}${R.err.toFixed(1)} m)`, X(R.range), oy - 70, { size: 12, mono: true, align: "center", color: R.hit ? C.green : C.red });
+    D.stamp(R.hit ? "BULLSEYE" : "MISSED", W - 110, 80, R.hit ? C.green : C.red);
+  }
+}
+
+function finishProjectile(p) {
+  const desc = `${p.speed} m/s at ${p.angleDeg}° from ${p.heightM} m on ${p.gravity}${p.drag ? " with drag" : ""}, ${p.massKg} kg`;
+  Bench.result({
+    passed: R.hit,
+    summary: `${desc}: landed at ${R.range.toFixed(1)} m vs target ${p.targetM} m (${R.err >= 0 ? "+" : ""}${R.err.toFixed(1)} m).`,
+    failureReason: R.hit ? undefined : `${R.err > 0 ? "overshot" : "fell short"} by ${Math.abs(R.err).toFixed(1)} m (tolerance ±${R.tol.toFixed(1)} m)`,
+    score: R.hit ? +(100 - (Math.abs(R.err) / +p.targetM) * 100).toFixed(2) : undefined, scoreLabel: "accuracy %",
+    metrics: { rangeM: +R.range.toFixed(2), errorM: +R.err.toFixed(2), apexM: +R.maxY.toFixed(2), flightS: +R.tof.toFixed(2) },
+  });
+}
+
+function drawPendulum(D, p, now) {
+  const { ctx, C } = D;
+  const W = D.W, H = D.H;
+  const px = W / 2, py = 70;
+  const Lpx = Math.min(H - 170, W * 0.45);
+  D.text(`pendulum · L = ${p.lengthM} m · release ${p.amplitudeDeg}° · ${p.gravity} (g = ${R.g})`, 18, 30, { size: 14 });
+  D.line(px - 90, py, px + 90, py, { width: 2.4 });
+  for (let x = px - 84; x < px + 90; x += 12) D.line(x, py, x - 7, py - 8, { width: 1, single: true, alpha: 0.6 });
+  // protractor arc
+  ctx.strokeStyle = C.ink3; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(px, py, Lpx * 0.35, Math.PI / 2 - R.th0, Math.PI / 2 + R.th0); ctx.stroke();
+  D.line(px, py, px, py + Lpx + 30, { dash: [3, 5], width: 1, single: true, color: C.ink3 });
+
+  let th = R.th0, el = 0;
+  if (anim) {
+    el = now - anim.t0;
+    const speed = Math.max(1, R.period / 2.2);
+    const tt = el * speed;
+    // replay physics quickly with small-step integration for display
+    th = displayAngle(tt);
+    if (tt >= R.period * 2 && !anim.done) { anim.done = true; finishPendulum(p); }
+  }
+  const bx = px + Math.sin(th) * Lpx, by = py + Math.cos(th) * Lpx;
+  D.line(px, py, bx, by, { width: 1.4, single: true });
+  D.circle(bx, by, 14, { fill: C.paper, seed: 11 });
+  D.hatch(bx - 9, by - 9, 18, 18, C.ink, 5);
+  D.text(`θ₀ = ${p.amplitudeDeg}°`, px + 10, py + Lpx * 0.35 + 18, { size: 12, mono: true, color: C.ink2 });
+
+  const lines = [
+    [`measured period`, `${R.period.toFixed(3)} s`],
+    [`small-angle formula`, `${R.small.toFixed(3)} s`],
+    [`target`, `${(+p.targetPeriodS).toFixed(3)} s ± 2%`],
+  ];
+  lines.forEach(([k, v], i) => { D.text(k, 20, H - 70 + i * 18, { size: 12, mono: true, color: C.ink2 }); D.text(v, 230, H - 70 + i * 18, { size: 12, mono: true }); });
+  if (anim && anim.done) D.stamp(R.hit ? "ON TIME" : "OFF BEAT", W - 110, H - 60, R.hit ? C.green : C.red);
+}
+
+let cache = null;
+function displayAngle(t) {
+  if (!cache || cache.key !== R.period) {
+    const arr = []; let th = R.th0, w = 0; const dt = 0.002;
+    for (let s = 0; s < R.period * 2.2; s += dt) { const a = (-R.g / R.L) * Math.sin(th); w += a * dt; th += w * dt; arr.push(th); }
+    cache = { key: R.period, arr, dt };
+  }
+  return cache.arr[Math.min(cache.arr.length - 1, Math.floor(t / cache.dt))];
+}
+
+function finishPendulum(p) {
+  const desc = `pendulum L=${p.lengthM} m, released at ${p.amplitudeDeg}° on ${p.gravity}`;
+  Bench.result({
+    passed: R.hit,
+    summary: `${desc}: period ${R.period.toFixed(3)} s vs target ${(+p.targetPeriodS).toFixed(2)} s (${(R.err * 100).toFixed(1)}%).`,
+    failureReason: R.hit ? undefined : `period ${R.err > 0 ? "too long" : "too short"} by ${Math.abs(R.err * 100).toFixed(1)}%`,
+    score: R.hit ? +(100 - Math.abs(R.err) * 100).toFixed(2) : undefined, scoreLabel: "timing accuracy %",
+    metrics: { periodS: +R.period.toFixed(4), smallAngleS: +R.small.toFixed(4) },
+  });
+}
+
+function niceStep(x) { const p = Math.pow(10, Math.floor(Math.log10(x))); const n = x / p; return (n < 1.5 ? 1 : n < 3.5 ? 2 : n < 7.5 ? 5 : 10) * p; }
+</script>
+</body>
+</html>

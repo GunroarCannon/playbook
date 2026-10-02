@@ -1,0 +1,328 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Bridge Truss Bench — pin-jointed truss, method of joints, centre point load.
+ * Units: cm and kgf. Sticks are 11.4 cm long.
+ */
+const STICK = 11.4;
+const TENSION_CAP = 25;        // kgf per layer
+const BUCKLE_BASE = 3.6;       // kgf for one full-length stick in compression (Euler, weak axis)
+const JOINT_CAP = { wood: 18, hot: 7 };
+const BEAM_MOMENT_CAP = 21;    // kgf·cm for a flat 2-row deck, wood glue, single layer
+
+function build(p) {
+  const L = +p.spanCm, Hh = +p.heightCm, n = Math.max(2, Math.round(+p.panels));
+  const design = p.design;
+  const nodes = [], members = [];
+  const dx = L / n;
+  const add = (x, y) => (nodes.push({ x, y }), nodes.length - 1);
+  const mem = (a, b, kind) => members.push({ a, b, kind });
+  const bottom = [];
+  for (let i = 0; i <= n; i++) bottom.push(add(i * dx, 0));
+  for (let i = 0; i < n; i++) mem(bottom[i], bottom[i + 1], "chord");
+  if (design === "beam") return { nodes, members, bottom, top: [], n, L, H: 0 };
+
+  const top = [];
+  if (design === "warren") {
+    for (let i = 0; i < n; i++) top.push(add((i + 0.5) * dx, Hh));
+    for (let i = 0; i < n - 1; i++) mem(top[i], top[i + 1], "chord");
+    for (let i = 0; i < n; i++) { mem(bottom[i], top[i], "diag"); mem(top[i], bottom[i + 1], "diag"); }
+  } else {
+    // Pratt / Howe: top nodes above interior bottom nodes
+    top.push(null);
+    for (let i = 1; i < n; i++) top.push(add(i * dx, Hh));
+    for (let i = 1; i < n - 1; i++) mem(top[i], top[i + 1], "chord");
+    for (let i = 1; i < n; i++) mem(bottom[i], top[i], "vert");
+    mem(bottom[0], top[1], "diag");
+    mem(bottom[n], top[n - 1], "diag");
+    for (let i = 1; i <= n - 2; i++) {
+      const leftHalf = (i + 0.5) * dx <= L / 2;
+      if (design === "pratt") leftHalf ? mem(top[i], bottom[i + 1], "diag") : mem(top[i + 1], bottom[i], "diag");
+      else leftHalf ? mem(bottom[i], top[i + 1], "diag") : mem(bottom[i + 1], top[i], "diag");
+    }
+  }
+  return { nodes, members, bottom, top, n, L, H: Hh };
+}
+
+function solve(model, P) {
+  const { nodes, members, bottom, n } = model;
+  const j = nodes.length, m = members.length;
+  const N = 2 * j; // unknowns: m member forces + 3 reactions (Ax, Ay, By)
+  if (m + 3 !== N) return { ok: false, reason: "not statically determinate" };
+  const A = Array.from({ length: N }, () => new Float64Array(N));
+  const b = new Float64Array(N);
+  members.forEach((mb, k) => {
+    const p = nodes[mb.a], q = nodes[mb.b];
+    const len = Math.hypot(q.x - p.x, q.y - p.y);
+    const cx = (q.x - p.x) / len, cy = (q.y - p.y) / len;
+    // tension positive: force on node a points toward b
+    A[2 * mb.a][k] += cx; A[2 * mb.a + 1][k] += cy;
+    A[2 * mb.b][k] -= cx; A[2 * mb.b + 1][k] -= cy;
+    mb.len = len;
+  });
+  const left = bottom[0], right = bottom[n];
+  A[2 * left][m] = 1; A[2 * left + 1][m + 1] = 1; A[2 * right + 1][m + 2] = 1;
+  // loads (downward = negative y), centre point load split if no centre node
+  if (n % 2 === 0) b[2 * bottom[n / 2] + 1] += P;
+  else { b[2 * bottom[(n - 1) / 2] + 1] += P / 2; b[2 * bottom[(n + 1) / 2] + 1] += P / 2; }
+  // Sum F + load = 0  ->  A x = -load ; load is -P in y, so rhs = +P
+  // Gaussian elimination with partial pivoting
+  for (let c = 0; c < N; c++) {
+    let piv = c;
+    for (let r = c + 1; r < N; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+    if (Math.abs(A[piv][c]) < 1e-9) return { ok: false, reason: "unstable geometry" };
+    [A[c], A[piv]] = [A[piv], A[c]]; [b[c], b[piv]] = [b[piv], b[c]];
+    for (let r = 0; r < N; r++) {
+      if (r === c) continue;
+      const f = A[r][c] / A[c][c];
+      if (!f) continue;
+      for (let k = c; k < N; k++) A[r][k] -= f * A[c][k];
+      b[r] -= f * b[c];
+    }
+  }
+  const x = Array.from({ length: N }, (_, i) => b[i] / A[i][i]);
+  return { ok: true, forces: x.slice(0, m) };
+}
+
+function analyse(p) {
+  const P = Math.max(0, +p.loadKg);
+  const layers = p.doubled ? 2 : 1;
+  const joint = JOINT_CAP[p.glue] * (p.doubled ? 1.6 : 1);
+  const model = build(p);
+  const res = { model, P, layers, ratio: 0, worst: -1, sticks: 0, ok: true, reason: "" };
+
+  if (p.design === "beam") {
+    const rows = 2;
+    res.sticks = Math.ceil(model.L / STICK) * rows * layers;
+    const Mcap = BEAM_MOMENT_CAP * (p.doubled ? 3.5 : 1) * (p.glue === "hot" ? 0.6 : 1);
+    const M = (P * model.L) / 4;
+    res.ratio = Mcap ? M / Mcap : 9;
+    res.capacityKg = (4 * Mcap) / model.L;
+    res.worst = Math.floor(model.n / 2) - (model.n % 2 ? 0 : 1);
+    res.mode = "bending at mid-span";
+    model.members.forEach((mb, i) => { mb.force = 0; mb.ratio = res.ratio * Math.sin(Math.PI * ((i + 0.5) / model.n)); });
+  } else {
+    const s = solve(model, 1); // unit load; scale linearly
+    if (!s.ok) { res.ok = false; res.reason = s.reason; return res; }
+    let worst = -1, worstR = 0;
+    model.members.forEach((mb, k) => {
+      const f1 = s.forces[k];
+      mb.force = f1 * P;
+      const tension = f1 >= 0;
+      const memberCap = tension ? TENSION_CAP * layers : Math.min(TENSION_CAP * layers, BUCKLE_BASE * Math.pow(STICK / mb.len, 2) * (p.doubled ? 6 : 1));
+      mb.cap = Math.min(memberCap, joint);
+      mb.capFor1 = Math.abs(f1) / mb.cap;
+      mb.ratio = Math.abs(mb.force) / mb.cap;
+      mb.tension = tension;
+      mb.limit = memberCap < joint ? (tension ? "pulled apart" : "buckled") : "glue joint let go";
+      if (mb.capFor1 > worstR) { worstR = mb.capFor1; worst = k; }
+      res.sticks += Math.ceil(mb.len / STICK - 0.02) * layers;
+    });
+    res.worst = worst;
+    res.ratio = worstR * P;
+    res.capacityKg = worstR ? 1 / worstR : Infinity;
+    const wm = model.members[worst];
+    res.mode = wm ? `${wm.kind === "chord" ? (wm.tension ? "bottom chord" : "top chord") : wm.kind === "vert" ? "vertical" : "diagonal"} ${wm.limit}` : "";
+  }
+  res.overBudget = res.sticks > +p.stickBudget;
+  return res;
+}
+
+// ---------------------------------------------------------------- state + animation
+let A = null;              // current analysis
+let anim = null;           // { t0, dur, failAt, done }
+let snapT = 0;
+
+function publishMetrics(p) {
+  A = analyse(p);
+  Bench.metrics({
+    stressRatio: A.ratio,
+    label: A.ok ? `${A.sticks}/${p.stickBudget} sticks · fails ≈ ${A.capacityKg.toFixed(1)} kg` : A.reason,
+    values: { sticks: A.sticks, capacityKg: +A.capacityKg.toFixed(2), loadKg: A.P },
+  });
+}
+
+Bench.init({
+  params: { design: "pratt", spanCm: 40, heightCm: 8, panels: 6, loadKg: 3, stickBudget: 50, doubled: false, glue: "wood" },
+  onParams(p) { if (!anim || anim.done) { anim = null; snapT = 0; } publishMetrics(p); },
+  onReset(p) { anim = null; snapT = 0; publishMetrics(p); },
+  onRun(p) {
+    publishMetrics(p);
+    const failFrac = A.ok ? Math.min(1, A.capacityKg / Math.max(A.P, 1e-6)) : 0;
+    anim = { t0: performance.now() / 1000, dur: 1.8, failFrac, failed: !A.ok || A.ratio >= 1 || A.overBudget, sent: false, p: { ...p } };
+    snapT = 0;
+  },
+  draw(D, p, dt, now) {
+    if (!A) publishMetrics(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+    const m = A.model;
+    const pad = 70;
+    const scale = Math.min((W - pad * 2) / m.L, (H * 0.55) / Math.max(m.H || 6, 6));
+    const ox = (W - m.L * scale) / 2, oy = H * 0.66;
+
+    // --- load progress
+    let frac = 1, broken = false;
+    if (anim) {
+      const t = (now - anim.t0) / anim.dur;
+      const target = anim.failed ? (A.ok && !A.overBudget ? anim.failFrac : 0.25) : 1;
+      frac = Math.min(t, target);
+      if (t >= target && anim.failed) { broken = true; snapT += dt; }
+      if (t >= target && !anim.sent) {
+        anim.sent = true; anim.done = true;
+        finish(anim.p, anim.failed);
+      }
+    }
+    const loadNow = anim ? A.P * D.ease(Math.min(1, frac)) : A.P;
+    const ratioNow = A.ratio * (A.P ? loadNow / A.P : 0);
+
+    // --- node positions with exaggerated deflection
+    const sag = Math.min(1.2, ratioNow) * 10 + (broken ? Math.min(40, snapT * 140) : 0);
+    const pos = m.nodes.map((nd) => {
+      const s = Math.sin(Math.PI * (nd.x / m.L));
+      return { x: ox + nd.x * scale, y: oy - nd.y * scale + sag * s };
+    });
+
+    // supports + ground
+    const left = pos[m.bottom[0]], right = pos[m.bottom[m.n]];
+    D.ground(left.x - 60, left.x + 18, oy + 22);
+    D.ground(right.x - 18, right.x + 60, oy + 22);
+    tri(D, left.x, oy + 2, false); tri(D, right.x, oy + 2, true);
+
+    // dimension lines
+    D.dim(left.x, oy - (m.H || 0) * scale - 34, right.x, oy - (m.H || 0) * scale - 34, `${(+p.spanCm).toFixed(0)} cm span`);
+    if (m.H) D.dim(left.x - 30, oy, left.x - 30, oy - m.H * scale, `${(+p.heightCm).toFixed(1)}`, {});
+
+    // members
+    m.members.forEach((mb, k) => {
+      const a = pos[mb.a], b = pos[mb.b];
+      const r = (mb.ratio || 0) * (A.P ? loadNow / A.P : 0);
+      let col = C.ink;
+      if (r > 0.02 && p.design !== "beam") col = mb.tension ? mixColor(C.ink, C.blue, Math.min(1, r * 1.4)) : mixColor(C.ink, C.red, Math.min(1, r * 1.4));
+      if (p.design === "beam") col = mixColor(C.ink, C.red, Math.min(1, r));
+      const isBreak = broken && k === A.worst;
+      if (isBreak) {
+        // snapped member: two halves kicking apart
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, k2 = Math.min(1, snapT * 3);
+        const ang = Math.atan2(b.y - a.y, b.x - a.x);
+        const off = 6 + 10 * k2;
+        stick(D, a.x, a.y, mx - Math.cos(ang) * off, my - Math.sin(ang) * off + 8 * k2, C.red, mb, k);
+        stick(D, mx + Math.cos(ang) * off, my + Math.sin(ang) * off + 8 * k2, b.x, b.y, C.red, mb, k + 99);
+        zap(D, mx, my, C.red);
+      } else stick(D, a.x, a.y, b.x, b.y, col, mb, k);
+      if (!anim && r >= 0.8 && p.design !== "beam") {
+        D.text(`${Math.round(r * 100)}%`, (a.x + b.x) / 2 + 4, (a.y + b.y) / 2 - 4, { size: 11, mono: true, color: r >= 1 ? C.red : C.amber });
+      }
+    });
+    // joints (gusset dots)
+    pos.forEach((q) => { ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(q.x, q.y, 2.6, 0, Math.PI * 2); ctx.fill(); });
+
+    // load: hook + weight
+    const mid = m.n % 2 === 0 ? pos[m.bottom[m.n / 2]] : { x: (pos[m.bottom[(m.n - 1) / 2]].x + pos[m.bottom[(m.n + 1) / 2]].x) / 2, y: (pos[m.bottom[(m.n - 1) / 2]].y + pos[m.bottom[(m.n + 1) / 2]].y) / 2 };
+    const drop = broken ? Math.min(80, snapT * 260) : 0;
+    const wy = mid.y + 36 + drop;
+    D.line(mid.x, mid.y, mid.x, wy - 4, { dash: [4, 3], width: 1.2, single: true });
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.arc(mid.x - 4, wy - 4, 4, -0.3, Math.PI); ctx.stroke();
+    const ww = 46 + Math.min(30, A.P * 2);
+    D.rect(mid.x - ww / 2, wy, ww, 28, { hatch: true, seed: 77 });
+    D.text(`${loadNow.toFixed(1)} kg`, mid.x, wy + 19, { size: 13, mono: true, align: "center" });
+
+    // header notes
+    D.text(`${labelFor(p.design)} · ${m.n} panels · ${p.doubled ? "double" : "single"} layer · ${p.glue === "hot" ? "hot glue" : "wood glue"}`, 18, 30, { size: 15 });
+    const budCol = A.overBudget ? C.red : C.ink2;
+    D.text(`sticks used: ${A.sticks} / ${p.stickBudget}`, 18, 50, { size: 13, mono: true, color: budCol });
+    if (A.ok) D.text(`predicted failure ≈ ${A.capacityKg.toFixed(1)} kg (${A.mode})`, 18, 68, { size: 13, mono: true, color: C.ink2 });
+    else D.text(A.reason, 18, 68, { size: 13, mono: true, color: C.red });
+
+    // legend
+    if (p.design !== "beam") {
+      D.line(W - 150, 26, W - 126, 26, { color: C.blue, width: 3, single: true });
+      D.text("tension", W - 120, 30, { size: 12, color: C.ink2 });
+      D.line(W - 150, 44, W - 126, 44, { color: C.red, width: 3, single: true });
+      D.text("compression", W - 120, 48, { size: 12, color: C.ink2 });
+    }
+
+    if (anim && anim.done) {
+      if (anim.failed) D.stamp(A.overBudget && A.ratio < 1 ? "OVER BUDGET" : "SNAPPED!", W - 120, H - 50, C.red);
+      else D.stamp("HELD!", W - 100, H - 50, C.green);
+    }
+  },
+});
+
+function finish(p, failed) {
+  const name = labelFor(p.design);
+  const base = `${name}, ${(+p.spanCm).toFixed(0)}cm span, ${(+p.heightCm).toFixed(1)}cm tall, ${p.panels} panels, ${p.doubled ? "double" : "single"}-layer, ${p.glue === "hot" ? "hot glue" : "wood glue"}, ${A.sticks} sticks`;
+  if (!A.ok) {
+    Bench.result({ passed: false, summary: `${base}: geometry is unstable.`, failureReason: A.reason, metrics: { sticks: A.sticks } });
+  } else if (A.ratio >= 1) {
+    Bench.result({
+      passed: false,
+      summary: `${base} snapped at ${A.capacityKg.toFixed(1)}kg while loading to ${A.P.toFixed(1)}kg.`,
+      failureReason: A.mode,
+      score: +A.capacityKg.toFixed(2), scoreLabel: "kg at failure",
+      metrics: { sticks: A.sticks, failedAtKg: +A.capacityKg.toFixed(2), targetKg: A.P },
+    });
+  } else if (A.overBudget) {
+    Bench.result({
+      passed: false,
+      summary: `${base} would hold ${A.P.toFixed(1)}kg but needs ${A.sticks} sticks, over the ${p.stickBudget}-stick budget.`,
+      failureReason: `over stick budget by ${A.sticks - p.stickBudget}`,
+      metrics: { sticks: A.sticks, budget: +p.stickBudget },
+    });
+  } else {
+    Bench.result({
+      passed: true,
+      summary: `${base} held ${A.P.toFixed(1)}kg (predicted failure at ${A.capacityKg.toFixed(1)}kg).`,
+      score: +A.P.toFixed(2), scoreLabel: "kg held",
+      metrics: { sticks: A.sticks, heldKg: A.P, capacityKg: +A.capacityKg.toFixed(2) },
+    });
+  }
+}
+
+function labelFor(d) { return { beam: "Flat beam", pratt: "Pratt truss", howe: "Howe truss", warren: "Warren truss" }[d] || d; }
+
+function stick(D, x1, y1, x2, y2, col, mb, seed) {
+  // popsicle stick: two parallel inked edges
+  const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+  const nx = -(y2 - y1) / len * 2.6, ny = (x2 - x1) / len * 2.6;
+  const w = mb && mb.kind === "chord" ? 1.7 : 1.4;
+  D.line(x1 + nx, y1 + ny, x2 + nx, y2 + ny, { color: col, width: w, seed: seed * 7 + 1, single: true });
+  D.line(x1 - nx, y1 - ny, x2 - nx, y2 - ny, { color: col, width: w, seed: seed * 7 + 2, single: true });
+}
+
+function tri(D, x, y, roller) {
+  const { ctx, C } = D;
+  D.line(x, y, x - 12, y + 18, { seed: x | 0 }); D.line(x, y, x + 12, y + 18, { seed: (x | 0) + 1 }); D.line(x - 12, y + 18, x + 12, y + 18, { seed: (x | 0) + 2 });
+  if (roller) for (const dx of [-7, 0, 7]) { ctx.strokeStyle = C.ink; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x + dx, y + 21, 2.4, 0, Math.PI * 2); ctx.stroke(); }
+}
+
+function zap(D, x, y, col) {
+  const { ctx } = D;
+  ctx.strokeStyle = col; ctx.lineWidth = 1.6; ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    ctx.moveTo(x + Math.cos(a) * 8, y + Math.sin(a) * 8);
+    ctx.lineTo(x + Math.cos(a) * 16, y + Math.sin(a) * 16);
+  }
+  ctx.stroke();
+}
+
+function mixColor(a, b, t) {
+  const pa = hex(a), pb = hex(b);
+  return `rgb(${pa.map((v, i) => Math.round(v + (pb[i] - v) * t)).join(",")})`;
+}
+function hex(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+</script>
+</body>
+</html>

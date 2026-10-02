@@ -1,0 +1,179 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Off-Grid Solar Bench — 10-minute energy balance. Starts at 18:00 with a full battery
+ * (the end of a sunny day), runs `days` x 24h.
+ */
+const STEP_H = 1 / 6;
+function simulate(p) {
+  const V = +p.systemVoltage, capWh = V * +p.batteryAh;
+  const floor = 1 - +p.maxDoD / 100;
+  const dailySolarWh = +p.panelW * +p.sunHours * 0.8 * (1 - +p.cloudPct / 100);
+  const A = (dailySolarWh * Math.PI) / 24; // peak W for a half-sine over 06:00–18:00
+  const shed = p.shedHour === "none" ? null : +p.shedHour;
+  const steps = Math.round((+p.days * 24) / STEP_H);
+  let soc = 1, cutAt = null, minSoc = 1;
+  const series = [];
+  for (let i = 0; i <= steps; i++) {
+    const tAbs = 18 + i * STEP_H;           // hours since midnight of day 0
+    const h = tAbs % 24;
+    const solar = h > 6 && h < 18 ? A * Math.sin((Math.PI * (h - 6)) / 12) : 0;
+    const day = h >= 7 && h < 18;
+    let load = day ? +p.dayLoadW : +p.baseLoadW;
+    const shedding = shed != null && (shed > 6 ? h >= shed || h < 6 : h >= shed && h < 6);
+    if (shedding) load *= 0.6;
+    if (p.fridge) load += 120;
+    if (cutAt != null) { series.push({ t: tAbs, h, soc, solar, load, out: true }); continue; }
+    soc = Math.min(1, soc + ((solar - load) * STEP_H) / capWh);
+    minSoc = Math.min(minSoc, soc);
+    if (soc <= floor) { soc = floor; cutAt = tAbs; }
+    series.push({ t: tAbs, h, soc, solar, load, out: cutAt != null });
+  }
+  const usable = capWh * (+p.maxDoD / 100);
+  const depthUsed = (1 - minSoc) / (+p.maxDoD / 100);
+  return { series, cutAt, minSoc, floor, capWh, usable, dailySolarWh, depthUsed, A };
+}
+
+const fmtClock = (tAbs) => {
+  const h = Math.floor(tAbs % 24), m = Math.round(((tAbs % 1) * 60) / 10) * 10 % 60;
+  const night = Math.floor((tAbs - 18) / 24) + 1;
+  return { clock: `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`, night };
+};
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  const c = R.cutAt != null ? fmtClock(R.cutAt) : null;
+  Bench.metrics({
+    stressRatio: R.cutAt != null ? 1.2 : R.depthUsed,
+    label: c ? `cut-out ${c.clock} (night ${c.night})` : `lowest charge ${(R.minSoc * 100).toFixed(0)}%`,
+    values: { minSocPct: Math.round(R.minSoc * 100), cutOut: c ? c.clock : "none" },
+  });
+}
+
+Bench.init({
+  params: { systemVoltage: "24", batteryAh: 200, maxDoD: 80, panelW: 1200, sunHours: 5.2, cloudPct: 0, dayLoadW: 600, baseLoadW: 320, fridge: true, shedHour: "none", days: 2 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, dur: 5, done: false, p: { ...p } }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+    const gx = 70, gy = H - 70, gw = W - gx - 150, gh = Math.max(120, H - 190);
+    const N = R.series.length;
+    const prog = anim ? Math.min(1, (now - anim.t0) / anim.dur) : 1;
+    if (anim && !anim.done && prog >= 1) { anim.done = true; finish(anim.p); }
+    const upto = Math.max(2, Math.floor(prog * (N - 1)));
+
+    D.text(`${p.systemVoltage}V · ${p.batteryAh}Ah (${(R.capWh / 1000).toFixed(1)} kWh, ${(R.usable / 1000).toFixed(1)} kWh usable) · ${p.panelW}W panels · ${p.sunHours}h sun${+p.cloudPct ? ` · ${p.cloudPct}% cloud` : ""}`, 18, 30, { size: 14 });
+    D.text(`starts 18:00 with a full battery · solar/day ${(R.dailySolarWh / 1000).toFixed(2)} kWh`, 18, 50, { size: 12, mono: true, color: C.ink2 });
+
+    // axes
+    D.line(gx, gy, gx + gw, gy, { width: 1.4 });
+    D.line(gx, gy, gx, gy - gh, { width: 1.4 });
+    for (let s = 0; s <= 100; s += 25) {
+      const y = gy - (s / 100) * gh;
+      D.text(`${s}%`, gx - 8, y + 4, { size: 10, mono: true, align: "right", color: C.ink3 });
+    }
+    const tx = (i) => gx + (i / (N - 1)) * gw;
+    R.series.forEach((pt, i) => {
+      if (Math.abs(pt.h - Math.round(pt.h)) < 1e-6 && Math.round(pt.h) % 6 === 0) {
+        D.text(`${String(Math.round(pt.h) % 24).padStart(2, "0")}h`, tx(i), gy + 16, { size: 10, mono: true, align: "center", color: C.ink3 });
+        D.line(tx(i), gy, tx(i), gy + 5, { width: 1, single: true });
+      }
+    });
+    // night shading
+    R.series.forEach((pt, i) => {
+      if (i < N - 1 && (pt.h < 6 || pt.h >= 18)) {
+        ctx.fillStyle = C.navy; ctx.globalAlpha = 0.05; ctx.fillRect(tx(i), gy - gh, tx(i + 1) - tx(i) + 0.5, gh); ctx.globalAlpha = 1;
+      }
+    });
+    // cut-out threshold
+    const fy = gy - R.floor * gh;
+    D.line(gx, fy, gx + gw, fy, { color: C.red, dash: [6, 4], width: 1.2, single: true });
+    D.text(`inverter cut-out (${p.maxDoD}% DoD)`, gx + gw - 4, fy - 6, { size: 11, color: C.red, align: "right" });
+
+    // solar production (amber, scaled to graph) and load (dashed)
+    const maxW = Math.max(R.A, +p.dayLoadW + 120, +p.baseLoadW + 120, 100);
+    ctx.beginPath(); ctx.moveTo(tx(0), gy);
+    for (let i = 0; i < upto; i++) ctx.lineTo(tx(i), gy - (R.series[i].solar / maxW) * gh * 0.55);
+    ctx.lineTo(tx(upto - 1), gy); ctx.closePath();
+    ctx.fillStyle = C.amber; ctx.globalAlpha = 0.18; ctx.fill(); ctx.globalAlpha = 1;
+    ctx.strokeStyle = C.amber; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.setLineDash([3, 3]); ctx.strokeStyle = C.ink2; ctx.beginPath();
+    for (let i = 0; i < upto; i++) { const y = gy - (R.series[i].load / maxW) * gh * 0.55; i ? ctx.lineTo(tx(i), y) : ctx.moveTo(tx(i), y); }
+    ctx.stroke(); ctx.setLineDash([]);
+
+    // state of charge (ink)
+    ctx.strokeStyle = C.navy; ctx.lineWidth = 2.4; ctx.lineJoin = "round"; ctx.beginPath();
+    for (let i = 0; i < upto; i++) { const y = gy - R.series[i].soc * gh; i ? ctx.lineTo(tx(i), y) : ctx.moveTo(tx(i), y); }
+    ctx.stroke();
+
+    // legend
+    const lx = gx + gw + 18;
+    D.line(lx, 90, lx + 22, 90, { color: C.navy, width: 2.4, single: true }); D.text("battery %", lx + 28, 94, { size: 12 });
+    D.line(lx, 110, lx + 22, 110, { color: C.amber, width: 3, single: true }); D.text("solar W", lx + 28, 114, { size: 12 });
+    D.line(lx, 130, lx + 22, 130, { color: C.ink2, width: 1.4, dash: [3, 3], single: true }); D.text("load W", lx + 28, 134, { size: 12 });
+
+    // battery doodle with level
+    const cur = R.series[upto - 1];
+    const bx = lx + 10, by = 160, bw = 46, bh = 90;
+    D.rect(bx, by, bw, bh, { seed: 5 });
+    D.rect(bx + 15, by - 7, 16, 7, { seed: 6 });
+    const lvl = cur.soc;
+    ctx.fillStyle = cur.out ? C.red : lvl < R.floor + 0.1 ? C.amber : C.green;
+    ctx.globalAlpha = 0.5; ctx.fillRect(bx + 4, by + bh - 4 - (bh - 8) * lvl, bw - 8, (bh - 8) * lvl); ctx.globalAlpha = 1;
+    const ck = fmtClock(cur.t);
+    D.text(`${Math.round(lvl * 100)}%`, bx + bw / 2, by + bh + 18, { size: 14, mono: true, align: "center" });
+    D.text(`${ck.clock}`, bx + bw / 2, by + bh + 34, { size: 12, mono: true, align: "center", color: C.ink2 });
+    // sun or moon
+    const isDay = cur.h > 6 && cur.h < 18;
+    if (isDay) { D.circle(bx + bw / 2, by + bh + 62, 10, { color: C.amber, seed: 9 }); for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; D.line(bx + bw / 2 + Math.cos(a) * 14, by + bh + 62 + Math.sin(a) * 14, bx + bw / 2 + Math.cos(a) * 19, by + bh + 62 + Math.sin(a) * 19, { color: C.amber, single: true, width: 1.4 }); } }
+    else { ctx.strokeStyle = C.navy; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(bx + bw / 2, by + bh + 62, 10, 0.6, Math.PI * 2 - 0.6); ctx.arc(bx + bw / 2 + 6, by + bh + 62, 8, Math.PI * 2 - 0.9, 0.9, true); ctx.stroke(); }
+
+    if (R.cutAt != null && (!anim || prog * (N - 1) >= R.series.findIndex((s) => s.out))) {
+      const i = R.series.findIndex((s) => s.out);
+      const x = tx(i);
+      D.line(x, gy, x, gy - gh, { color: C.red, width: 1.5, single: true });
+      const c = fmtClock(R.cutAt);
+      D.text(`BLACKOUT ${c.clock}`, x + 6, gy - gh + 14, { size: 13, color: C.red });
+    }
+    if (anim && anim.done) D.stamp(R.cutAt != null ? "BLACKOUT" : "LIGHTS ON", gx + gw * 0.62, gy - gh * 0.55, R.cutAt != null ? C.red : C.green);
+    if (!anim) D.text("(projection — press RUN TEST to play it out)", gx, gy + 38, { size: 11, color: C.ink3 });
+  },
+});
+
+function finish(p) {
+  const desc = `${p.systemVoltage}V ${p.batteryAh}Ah battery at ${p.maxDoD}% max DoD, ${p.panelW}W panels, ${p.sunHours}h sun${+p.cloudPct ? `, ${p.cloudPct}% cloud` : ""}, ${p.dayLoadW}W day / ${p.baseLoadW}W night load${p.fridge ? " + fridge" : ""}${p.shedHour !== "none" ? `, load-shedding from ${String(p.shedHour).padStart(2, "0")}:00` : ""}`;
+  if (R.cutAt != null) {
+    const c = fmtClock(R.cutAt);
+    Bench.result({
+      passed: false,
+      summary: `${desc}: inverter cut out at ${c.clock} on night ${c.night}.`,
+      failureReason: `battery hit the ${p.maxDoD}% depth-of-discharge floor; night load drained ${(R.usable / 1000).toFixed(1)} kWh usable before sunrise`,
+      metrics: { cutOut: c.clock, night: c.night, dailySolarKWh: +(R.dailySolarWh / 1000).toFixed(2) },
+    });
+  } else {
+    Bench.result({
+      passed: true,
+      summary: `${desc}: no blackout over ${p.days} day(s), lowest charge ${(R.minSoc * 100).toFixed(0)}%.`,
+      score: Math.round(R.minSoc * 100), scoreLabel: "lowest charge %",
+      metrics: { minSocPct: Math.round(R.minSoc * 100), dailySolarKWh: +(R.dailySolarWh / 1000).toFixed(2) },
+    });
+  }
+}
+</script>
+</body>
+</html>

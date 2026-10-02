@@ -1,26 +1,222 @@
 @import "tailwindcss";
 
+/* ------------------------------------------------------------------
+   "Inventor's notebook" design tokens
+   Light: grey graph paper, black + navy drafting ink.
+   Dark:  blueprint sheet, cyan grid, chalk-white ink.
+------------------------------------------------------------------- */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --paper: #f2f1ec;
+  --sheet: #fbfaf6;
+  --sheet-2: #f6f5ef;
+  --grid-minor: rgba(46, 62, 92, 0.085);
+  --grid-major: rgba(46, 62, 92, 0.17);
+  --ink: #1d1f24;
+  --ink-2: #4a4f5a;
+  --ink-3: #8a8f99;
+  --navy: #23336b;
+  --navy-soft: rgba(35, 51, 107, 0.08);
+  --red: #d9381e;
+  --red-soft: rgba(217, 56, 30, 0.1);
+  --blue: #0969da;
+  --blue-soft: rgba(9, 105, 218, 0.1);
+  --amber: #c98a12;
+  --amber-soft: rgba(210, 153, 34, 0.14);
+  --green: #2e7d4f;
+  --green-soft: rgba(46, 125, 79, 0.12);
+  --note: #fff6c7;
+  --shadow: rgba(29, 31, 36, 0.9);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --paper: #121821;
+  --sheet: #161d28;
+  --sheet-2: #1a2230;
+  --grid-minor: rgba(88, 166, 255, 0.07);
+  --grid-major: rgba(88, 166, 255, 0.15);
+  --ink: #e6edf3;
+  --ink-2: #b3bfcc;
+  --ink-3: #6f7d8e;
+  --navy: #8cb8ff;
+  --navy-soft: rgba(140, 184, 255, 0.1);
+  --red: #ff6b5a;
+  --red-soft: rgba(255, 107, 90, 0.13);
+  --blue: #58a6ff;
+  --blue-soft: rgba(88, 166, 255, 0.13);
+  --amber: #e3b341;
+  --amber-soft: rgba(227, 179, 65, 0.14);
+  --green: #56d364;
+  --green-soft: rgba(86, 211, 100, 0.12);
+  --note: #2b2a1c;
+  --shadow: rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-paper: var(--paper);
+  --color-sheet: var(--sheet);
+  --color-sheet-2: var(--sheet-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-navy: var(--navy);
+  --color-navy-soft: var(--navy-soft);
+  --color-red: var(--red);
+  --color-red-soft: var(--red-soft);
+  --color-blue: var(--blue);
+  --color-blue-soft: var(--blue-soft);
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --color-green: var(--green);
+  --color-green-soft: var(--green-soft);
+  --color-note: var(--note);
+  --font-hand: var(--font-hand), "Comic Sans MS", cursive;
+  --font-sans: var(--font-plex), system-ui, sans-serif;
+  --font-mono: var(--font-jb), ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+html,
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+/* graph paper: 10px minor squares, 50px bold guides */
+.graph-paper {
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+    linear-gradient(var(--grid-minor) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-minor) 1px, transparent 1px);
+  background-size:
+    50px 50px,
+    50px 50px,
+    10px 10px,
+    10px 10px;
+  background-position: -1px -1px;
+}
+
+.sheet {
+  background: var(--sheet);
+}
+
+/* drafted ink box: double rule with a hard offset shadow, like a pasted-in card */
+.ink-box {
+  border: 1.5px solid var(--ink);
+  border-radius: 3px;
+  box-shadow: 3px 3px 0 var(--shadow);
+}
+.ink-box-soft {
+  border: 1.25px solid color-mix(in srgb, var(--ink) 70%, transparent);
+  border-radius: 3px;
+}
+
+.btn-ink {
+  font-family: var(--font-hand);
+  border: 1.5px solid var(--ink);
+  border-radius: 4px;
+  background: var(--sheet);
+  box-shadow: 2px 2px 0 var(--shadow);
+  transition:
+    transform 0.08s ease,
+    box-shadow 0.08s ease,
+    background 0.15s;
+}
+.btn-ink:hover {
+  background: var(--sheet-2);
+}
+.btn-ink:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 var(--shadow);
+}
+.btn-ink:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.hand {
+  font-family: var(--font-hand);
+}
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* hatched fill used on dial grips and stamps */
+.hatch {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--ink) 35%, transparent) 0 1px,
+    transparent 1px 5px
+  );
+}
+
+/* little "stamp" label (PASSED / FAILED / RECALLED) */
+.stamp {
+  font-family: var(--font-hand);
+  border: 2px solid currentColor;
+  border-radius: 4px;
+  padding: 0 0.4rem;
+  letter-spacing: 0.06em;
+  transform: rotate(-4deg);
+  display: inline-block;
+}
+
+/* scrollbars that look like pencil lines */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ink) 30%, transparent) transparent;
+}
+
+/* hand-drawn wobble for doodles (filter defined in <SketchDefs/>) */
+.wobble {
+  filter: url(#pb-wobble);
+}
+
+@keyframes pb-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse {
+  animation: pb-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pb-draw {
+  from {
+    stroke-dashoffset: var(--len, 400);
+  }
+  to {
+    stroke-dashoffset: 0;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+.prose-ink p {
+  margin: 0.35rem 0;
+}
+.prose-ink ul {
+  list-style: "– ";
+  padding-left: 1.1rem;
+  margin: 0.35rem 0;
+}
+.prose-ink ol {
+  list-style: decimal;
+  padding-left: 1.3rem;
+}
+.prose-ink strong {
+  font-weight: 600;
+}
+.prose-ink code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--navy-soft);
+  padding: 0 0.25rem;
+  border-radius: 3px;
 }

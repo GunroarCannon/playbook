@@ -1,0 +1,211 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Checkout Rush Bench — multi-lane checkout, 1-second time steps, seeded randomness
+ * (same dials always give the same day, so results are comparable across sessions).
+ */
+function simulate(p) {
+  const rng = Bench.D.rng(424242);          // arrivals + basket sizes: the same day for every configuration
+  const svcRng = Bench.D.rng(777);         // service times
+  const expo = (mean, r = rng) => -Math.log(1 - r()) * mean;
+  const T = Math.round(+p.shiftHours * 3600);
+  const s = Math.max(1, Math.round(+p.cashiers));
+  const express = !!p.expressLane && s >= 2;
+  const svc = +p.serviceMin * 60, patience = +p.patienceMin * 60;
+  const lanes = Array.from({ length: s }, (_, i) => ({ express: express && i === 0, queue: [], busyUntil: 0, current: null }));
+  const customers = [];
+  const qlen = [];
+  let nextArrival = expo(3600 / +p.arrivalRate);
+  for (let t = 0; t < T; t++) {
+    while (nextArrival <= t) {
+      const small = rng() < 0.4;
+      const c = { id: customers.length, arrive: nextArrival, small, lane: -1, start: null, end: null, reneged: null };
+      const options = lanes.map((l, i) => ({ l, i })).filter(({ l }) => !l.express || small);
+      options.sort((a, b) => a.l.queue.length + (a.l.current ? 1 : 0) - (b.l.queue.length + (b.l.current ? 1 : 0)));
+      const pick = options[0];
+      c.lane = pick.i; pick.l.queue.push(c); customers.push(c);
+      nextArrival += expo(3600 / +p.arrivalRate);
+    }
+    for (const l of lanes) {
+      if (l.current && l.busyUntil <= t) { l.current.end = t; l.current = null; }
+      // walkouts
+      for (let i = l.queue.length - 1; i >= 0; i--) {
+        const c = l.queue[i];
+        if (t - c.arrive > patience) { c.reneged = t; l.queue.splice(i, 1); }
+      }
+      if (!l.current && l.queue.length) {
+        const c = l.queue.shift();
+        c.start = t;
+        l.current = c;
+        l.busyUntil = t + Math.max(10, expo(c.small && l.express ? svc * 0.4 : svc, svcRng));
+      }
+    }
+    if (t % 30 === 0) qlen.push(lanes.reduce((a, l) => a + l.queue.length, 0));
+  }
+  const served = customers.filter((c) => c.start != null);
+  const walkouts = customers.filter((c) => c.reneged != null).length;
+  const waits = served.map((c) => c.start - c.arrive);
+  const avgWait = waits.length ? waits.reduce((a, b) => a + b, 0) / waits.length : 0;
+  const p90 = waits.length ? waits.slice().sort((a, b) => a - b)[Math.floor(waits.length * 0.9)] : 0;
+  const wages = s * +p.wagePerHr * +p.shiftHours;
+  const revenue = served.length * +p.marginPerCustomer;
+  const profit = revenue - wages;
+  const rho = (+p.arrivalRate * (+p.serviceMin / 60)) / s;
+  return { customers, served: served.length, walkouts, arrivals: customers.length, avgWait, p90, wages, revenue, profit, rho, T, s, express, qlen, lanes: lanes.length };
+}
+
+let R = null, anim = null;
+
+function publish(p) {
+  R = simulate(p);
+  Bench.metrics({
+    stressRatio: R.rho,
+    label: `utilisation ${(R.rho * 100).toFixed(0)}% · ${R.walkouts} walkouts · wait ${Math.round(R.avgWait)}s`,
+    values: { avgWaitSec: Math.round(R.avgWait), walkouts: R.walkouts, profit: Math.round(R.profit) },
+  });
+}
+
+const money = (v) => (v < 0 ? "-" : "") + Math.abs(Math.round(v)).toLocaleString();
+
+Bench.init({
+  params: { arrivalRate: 45, cashiers: 2, serviceMin: 2.5, expressLane: false, patienceMin: 6, targetWaitSec: 180, shiftHours: 2, wagePerHr: 1200, marginPerCustomer: 400 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, dur: 6, done: false, p: { ...p } }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+
+    const simT = anim ? Math.min(1, (now - anim.t0) / anim.dur) * R.T : R.T * 0.5;
+    if (anim && !anim.done && simT >= R.T) { anim.done = true; finish(anim.p); }
+
+    // floor plan
+    const top = 92, planW = W - 250, laneGap = Math.min(110, (planW - 40) / Math.max(1, R.lanes));
+    const x0 = 30 + (planW - laneGap * (R.lanes - 1)) / 2;
+    D.text(`Checkout rush · ${p.arrivalRate} customers/hr · ${R.s} cashier${R.s > 1 ? "s" : ""}${R.express ? " (lane 1 express)" : ""}`, 18, 30, { size: 15 });
+    const clock = Math.floor(simT / 60);
+    D.text(`t = ${String(Math.floor(clock / 60)).padStart(2, "0")}:${String(clock % 60).padStart(2, "0")} into the rush`, 18, 50, { size: 13, mono: true, color: C.ink2 });
+
+    // entrance / exit
+    D.text("ENTRANCE ↑", 30 + planW / 2 - 40, H - 16, { size: 12, color: C.ink3 });
+    D.text("× walkouts", W - 110, H - 16, { size: 12, color: C.red });
+
+    for (let i = 0; i < R.lanes; i++) {
+      const x = x0 + i * laneGap;
+      // counter
+      D.rect(x - 26, top, 52, 26, { hatch: true, seed: 300 + i });
+      D.rect(x - 9, top - 14, 18, 14, { seed: 400 + i });
+      D.text(R.express && i === 0 ? "EXPRESS" : `TILL ${i + 1}`, x, top + 44, { size: 11, align: "center", mono: true, color: R.express && i === 0 ? C.blue : C.ink2 });
+      // cashier stick figure behind the counter
+      figure(D, x, top - 30, C.ink, 0.8);
+      D.line(x, top + 52, x, H - 70, { dash: [3, 5], width: 1, color: C.ink3, single: true });
+    }
+
+    // customers at time simT
+    const inQueue = Array.from({ length: R.lanes }, () => []);
+    const inService = [];
+    const leaving = [];
+    for (const c of R.customers) {
+      if (c.arrive > simT) break;
+      if (c.reneged != null && c.reneged <= simT) { if (simT - c.reneged < 120) leaving.push(c); continue; }
+      if (c.start != null && c.start <= simT) { if (c.end == null || c.end > simT) inService.push(c); continue; }
+      inQueue[c.lane].push(c);
+    }
+    inService.forEach((c) => { const x = x0 + c.lane * laneGap; figure(D, x, top + 62, c.small ? C.blue : C.ink, 0.75); });
+    inQueue.forEach((q, i) => {
+      const x = x0 + i * laneGap;
+      q.forEach((c, k) => {
+        const y = top + 92 + k * 22;
+        if (y > H - 60) return;
+        const waited = simT - c.arrive, frac = waited / (+p.patienceMin * 60);
+        figure(D, x + (k % 2 ? 6 : -6), y, frac > 0.75 ? C.red : frac > 0.45 ? C.amber : C.ink, 0.6);
+      });
+      if (q.length > 0) D.text(`${q.length} waiting`, x + 22, top + 96, { size: 11, mono: true, color: q.length > 6 ? C.red : C.ink2 });
+    });
+    leaving.forEach((c, k) => {
+      const age = (simT - c.reneged) / 120;
+      const x = D.lerp(x0 + c.lane * laneGap, W - 40, age), y = D.lerp(top + 120, H - 40, age);
+      D.text("×", x, y, { size: 16, color: C.red, align: "center" });
+    });
+
+    // queue length sparkline (bottom-left)
+    const gx = 18, gy = H - 40, gw = Math.min(220, W * 0.3), gh = 46;
+    D.text("queue length over the rush", gx, gy - gh - 8, { size: 11, color: C.ink3 });
+    D.line(gx, gy, gx + gw, gy, { width: 1, single: true, color: C.ink2 });
+    D.line(gx, gy, gx, gy - gh, { width: 1, single: true, color: C.ink2 });
+    const maxQ = Math.max(4, ...R.qlen);
+    ctx.strokeStyle = C.navy; ctx.lineWidth = 1.6; ctx.beginPath();
+    const upto = Math.floor((simT / R.T) * R.qlen.length);
+    R.qlen.slice(0, Math.max(2, upto)).forEach((q, i) => {
+      const x = gx + (i / (R.qlen.length - 1)) * gw, y = gy - (q / maxQ) * gh;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.stroke();
+
+    // receipt panel (top-right)
+    const rx = W - 210, ry = 70;
+    D.rect(rx, ry, 190, 128, { fill: C.paper, seed: 999 });
+    const lines = [
+      ["arrivals", R.arrivals], ["served", R.served], ["walkouts", R.walkouts],
+      ["avg wait", `${Math.round(R.avgWait)} s`], ["90% wait", `${Math.round(R.p90)} s`],
+      ["wages", money(R.wages)], ["profit", money(R.profit)],
+    ];
+    lines.forEach(([k, v], i) => {
+      D.text(k, rx + 10, ry + 20 + i * 15, { size: 11, mono: true, color: C.ink2 });
+      const bad = (k === "walkouts" && R.walkouts > R.arrivals * 0.02) || (k === "avg wait" && R.avgWait > +p.targetWaitSec) || (k === "profit" && R.profit <= 0);
+      D.text(String(v), rx + 180, ry + 20 + i * 15, { size: 11, mono: true, align: "right", color: bad ? C.red : C.ink });
+    });
+    if (!anim) D.text("projection · press RUN TEST", rx + 4, ry + 146, { size: 11, color: C.ink3 });
+
+    if (anim && anim.done) {
+      const ok = pass(p);
+      D.stamp(ok ? "SMOOTH RUSH" : "MELTDOWN", W - 120, H - 60, ok ? C.green : C.red);
+    }
+  },
+});
+
+function pass(p) { return R.avgWait <= +p.targetWaitSec && R.walkouts <= Math.max(0, R.arrivals * 0.02) && R.profit > 0; }
+
+function finish(p) {
+  const desc = `${R.s} cashier${R.s > 1 ? "s" : ""}${R.express ? " incl. express lane" : ""}, ${p.arrivalRate} cust/hr, ${p.serviceMin} min service, ${p.patienceMin} min patience, ${p.shiftHours}h rush`;
+  const stats = `avg wait ${Math.round(R.avgWait)}s, ${R.walkouts} of ${R.arrivals} walked out, profit ${money(R.profit)}`;
+  const reasons = [];
+  if (R.avgWait > +p.targetWaitSec) reasons.push(`average wait ${Math.round(R.avgWait)}s is over the ${p.targetWaitSec}s target`);
+  if (R.walkouts > R.arrivals * 0.02) reasons.push(`${R.walkouts} customers walked out`);
+  if (R.profit <= 0) reasons.push(`wages ${money(R.wages)} exceed margin ${money(R.revenue)}`);
+  const ok = !reasons.length;
+  Bench.result({
+    passed: ok,
+    summary: `${desc}: ${stats}.`,
+    failureReason: ok ? undefined : reasons.join("; "),
+    score: ok ? Math.round(R.profit) : undefined, scoreLabel: "profit",
+    metrics: { avgWaitSec: Math.round(R.avgWait), walkouts: R.walkouts, arrivals: R.arrivals, profit: Math.round(R.profit), utilisation: +R.rho.toFixed(2) },
+  });
+}
+
+function figure(D, x, y, col, s = 1) {
+  const { ctx } = D;
+  ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(x, y - 10 * s, 4.2 * s, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x, y - 6 * s); ctx.lineTo(x, y + 6 * s);
+  ctx.moveTo(x - 6 * s, y - 1 * s); ctx.lineTo(x + 6 * s, y - 1 * s);
+  ctx.moveTo(x, y + 6 * s); ctx.lineTo(x - 5 * s, y + 14 * s);
+  ctx.moveTo(x, y + 6 * s); ctx.lineTo(x + 5 * s, y + 14 * s);
+  ctx.stroke();
+}
+</script>
+</body>
+</html>
