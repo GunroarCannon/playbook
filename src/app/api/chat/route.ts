@@ -125,12 +125,21 @@ export async function POST(req: Request) {
                     kind: z.enum(["CONSTRAINT", "GOAL", "PREF", "PROFILE", "INSIGHT"]),
                     sentence: z.string().min(8).max(400).describe("one clear third-person sentence with numbers and units"),
                     benchSpecific: z.boolean().describe("true if this only applies to the current bench").optional(),
+                    dials: z
+                      .record(z.string(), z.union([z.number(), z.string(), z.boolean()]))
+                      .describe("for a CONSTRAINT: the dial values it fixes, e.g. {\"stickBudget\":40,\"glue\":\"hot\"}")
+                      .optional(),
                   }),
-                  execute: async ({ kind, sentence, benchSpecific }) => {
+                  execute: async ({ kind, sentence, benchSpecific, dials: ruleDials }) => {
+                    // A fact that sets dials belongs to this bench even if the model filed it as PROFILE/PREF.
+                    const benchScoped = Boolean(ruleDials && Object.keys(ruleDials).length) || !(benchSpecific === false || kind === "PROFILE" || kind === "PREF");
+                    const params =
+                      benchScoped && ruleDials ? sanitizeParams(getSim(simId)!.params, ruleDials).params : undefined;
                     const r = await remember(user, {
                       kind: (MEMORY_KINDS as readonly string[]).includes(kind) ? kind : "INSIGHT",
-                      simId: benchSpecific === false || kind === "PROFILE" || kind === "PREF" ? null : simId,
+                      simId: benchScoped ? simId : null,
                       sentence,
+                      params: params && Object.keys(params).length ? params : undefined,
                       source: "agent",
                     });
                     return r.ok ? { saved: true, text: r.text } : { saved: false, error: r.error };

@@ -30,7 +30,8 @@ How to use memory:
 - Start from the best [WIN] instead of from defaults.
 - Call \`remember\` when the person tells you something durable: a constraint, a goal, a preference, a fact about their project or situation,
   or when you both learn a general lesson (kind INSIGHT). One fact per call, one clear sentence with numbers and units, written in third person
-  ("Amara's bridge must use at most 50 sticks"). Do NOT remember test results; the bench saves those automatically.
+  ("Amara's bridge must use at most 50 sticks"). For a CONSTRAINT that maps to dials, also pass \`dials\` (e.g. {"stickBudget":50,"glue":"wood"})
+  so next time the bench opens already set to the person's limits. Do NOT remember test results; the bench saves those automatically.
 - Call \`recall\` if you need something specific that isn't in the recalled list.`
     : `
 ## Walrus Memory: OFF (amnesia mode)

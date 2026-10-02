@@ -234,7 +234,14 @@ export async function bootstrapMemories(user: User, simId: string) {
   wins.sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity) || (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
   const preset = wins[0] ?? null;
 
-  return { memories: relevant.slice(0, 14), preset, errors };
+  // Constraint memories can carry dial values too ("max 40 sticks" -> stickBudget=40). They are rules,
+  // so they're applied on top of the best run, oldest first so the newest rule wins.
+  const rules = relevant
+    .filter((m) => m.kind !== "WIN" && m.kind !== "FAILURE" && m.simId === simId && m.params)
+    .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+  const constraintParams = Object.assign({}, ...rules.map((m) => m.params)) as Record<string, ParamValue>;
+
+  return { memories: relevant.slice(0, 14), preset, constraintParams, errors };
 }
 
 /** Number of memories in this user's namespace, as reported by the relayer. */
