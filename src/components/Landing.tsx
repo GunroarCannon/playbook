@@ -480,9 +480,23 @@ function ScrollArrow({ wrap }: { wrap: React.RefObject<HTMLDivElement | null> })
 
 // ------------------------------------------------------------------ visuals
 
+const HERO_LOAD = 3;
+
+/** The hero's bench mock. Scrolling runs its test: the button goes down, weights slide onto the truss, it passes. */
 function HeroMock() {
+  const [ref, p] = useScrub<HTMLDivElement>("lead");
+  const load = seg(p, 0.12, 0.85) * HERO_LOAD;
+  const pressed = p > 0.04;
+  const done = p >= 0.85;
+  // Warren truss: bottom chord y=60 (nodes every 50), top chord y=30; it dips a little and inks in as it loads
+  const k = load / HERO_LOAD;
+  const dip = (x: number) => k * 2.5 * Math.sin((Math.PI * (x - 10)) / 200);
+  const pt = (x: number, y: number) => `${x},${(y + dip(x)).toFixed(2)}`;
+  const web = [10, 35, 60, 85, 110, 135, 160, 185, 210].map((x, i) => pt(x, i % 2 ? 30 : 60)).join(" ");
+  const tint = (c: string) => `color-mix(in srgb, ${c} ${Math.round(k * 100)}%, currentColor)`;
+  const hang = 86 + dip(110);
   return (
-    <div className="relative">
+    <div ref={ref} className="relative">
       <div className="fall sheet ink-box p-4 sm:p-5 rotate-[0.6deg]" style={v(150, 6)}>
         <div className="flex items-center justify-between border-b border-dashed border-ink/30 pb-2 mb-3">
           <span className="hand text-[15px] flex items-center gap-2">
@@ -503,23 +517,56 @@ function HeroMock() {
           </div>
         </div>
         <div className="fall mt-3 ink-box-soft bg-sheet-2 p-2 flex items-center gap-3" style={v(950, 4)}>
-          <svg viewBox="0 0 220 90" className="flex-1 h-[78px] text-ink" aria-hidden>
-            <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" filter="url(#pb-wobble)">
-              <path d="M10 60 H210" />
-              {/* Warren truss: top chord in compression (red), zig-zag web */}
-              <path d="M35 30 H185" stroke="var(--red)" />
-              <path d="M10 60 L35 30 L60 60 L85 30 L110 60 L135 30 L160 60 L185 30 L210 60" stroke="var(--blue)" />
+          <svg viewBox="0 0 220 92" className="flex-1 min-w-0 h-[104px] text-ink overflow-visible" aria-label={`Warren truss carrying ${load.toFixed(1)} kg`}>
+            <text x="2" y="10" className="hand" fontSize="12" fill="var(--navy)" style={{ opacity: 1 - seg(p, 0, 0.06) }}>
+              scroll down to run the test ↓
+            </text>
+            <text x="218" y="10" textAnchor="end" className="mono" fontSize="10.5" fill={done ? "var(--green)" : "currentColor"} style={{ opacity: seg(p, 0.04, 0.12) }}>
+              {load.toFixed(1)} kg
+            </text>
+            <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" filter="url(#pb-wobble)">
+              <polyline points={[10, 60, 110, 160, 210].map((x) => pt(x, 60)).join(" ")} />
+              {/* Warren truss: top chord goes red (compression), the zig-zag web blue, as the load rises */}
+              <polyline points={[35, 85, 135, 185].map((x) => pt(x, 30)).join(" ")} stroke={tint("var(--red)")} />
+              <polyline points={web} stroke={tint("var(--blue)")} />
               <path d="M10 60 l-8 12 h16 z M210 60 l-8 12 h16 z" />
-              <path d="M110 60 V74" strokeDasharray="3 3" />
-              <rect x="96" y="74" width="28" height="13" fill="url(#pb-hatch)" />
+              {/* hanger: a rope with a plate, and slotted weights that slide down it */}
+              <path d={`M110 ${60 + dip(110)} V${hang}`} strokeWidth="1.2" />
+              <path d={`M98 ${hang} H122`} strokeWidth="2" />
             </g>
+            {[0, 1, 2].map((i) => {
+              const a = seg(load, i + 0.1, i + 0.7);
+              return (
+                <rect
+                  key={i}
+                  x="100"
+                  y={hang - (i + 1) * 5.4}
+                  width="20"
+                  height="4.6"
+                  rx="1"
+                  fill="url(#pb-hatch)"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                  className="bb-block"
+                  style={{ opacity: a, transform: `translateY(${-18 * (1 - a)}px)` }}
+                />
+              );
+            })}
           </svg>
           <div className="flex flex-col items-center gap-1 shrink-0">
-            <span className="w-11 h-11 rounded-full bg-red border-[2.5px] border-ink shadow-[0_4px_0_var(--ink)]" />
-            <span className="mono text-[9px] tracking-wider">RUN TEST</span>
+            <span
+              className={`w-11 h-11 rounded-full bg-red border-[2.5px] border-ink motion-safe:transition-all duration-150 ${
+                pressed ? "translate-y-[3px] shadow-[0_1px_0_var(--ink)]" : "shadow-[0_4px_0_var(--ink)]"
+              }`}
+            />
+            <span className={`mono text-[9px] tracking-wider w-14 text-center ${done ? "text-green" : ""}`}>{done ? "PASSED" : pressed ? "TESTING…" : "RUN TEST"}</span>
           </div>
         </div>
-        <div className="fall absolute -right-2 -bottom-4 stamp text-[18px] text-green bg-sheet" style={v(1250, -10)}>
+        <div
+          className="bb-stamp absolute -right-2 -bottom-4 stamp text-[18px] text-green bg-sheet"
+          style={{ opacity: done ? 1 : 0, transform: `rotate(-10deg) scale(${done ? 1 : 1.6})` }}
+          aria-hidden={!done}
+        >
           PASSED 3 kg
         </div>
       </div>
@@ -586,28 +633,33 @@ const seg = (p: number, a: number, b: number) => clamp01((p - a) / (b - a));
  * How far an element has travelled through the screen, 0..1, updated on scroll.
  * "pass": 0 as it enters at the bottom, 1 when its middle reaches 40% from the top.
  * "sticky": progress through a tall section whose content sticks to the screen.
- * With reduced motion it is always 1 (the finished picture).
+ * "lead": for the hero, which is already on screen at load: 0 at the top of the page (or as it enters on a
+ * phone), 1 after a short scroll.
+ * This runs with reduced motion too: the picture only changes as fast as the reader scrolls (nothing moves on
+ * its own), and the time-based flourishes (bounces, shakes) are switched off in CSS instead.
  */
-function useScrub<T extends HTMLElement>(mode: "pass" | "sticky" = "pass") {
+function useScrub<T extends HTMLElement>(mode: "pass" | "sticky" | "lead" = "pass") {
   const ref = useRef<T>(null);
   const [p, setP] = useState(0);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
     let frame = 0;
     const update = () => {
       frame = 0;
-      if (still) return setP(1);
-      const r = el.getBoundingClientRect(), vh = window.innerHeight;
-      const raw = mode === "sticky" ? -r.top / Math.max(1, r.height - vh) : (vh * 0.95 - r.top) / (vh * 0.55 + r.height / 2);
+      const r = el.getBoundingClientRect(), vh = window.innerHeight, sy = window.scrollY;
+      let raw: number;
+      if (mode === "sticky") raw = -r.top / Math.max(1, r.height - vh);
+      else if (mode === "lead") {
+        const top = r.top + sy, start = Math.max(0, top - vh * 0.8);
+        raw = (sy - start) / Math.max(220, top + r.height / 2 - vh * 0.3 - start);
+      } else raw = (vh * 0.95 - r.top) / (vh * 0.55 + r.height / 2);
       setP(Math.round(clamp01(raw) * 500) / 500);
     };
     const onScroll = () => {
       if (!frame) frame = requestAnimationFrame(update);
     };
     update();
-    if (still) return;
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", onScroll);
     return () => {
@@ -730,8 +782,10 @@ function BridgeBreak({ load }: { load: number }) {
   const beamCol = broken || r > 0.85 ? "var(--red)" : r > 0.55 ? "var(--amber)" : "currentColor";
   const creak = !broken && r > 0.8;
   const tilt = (Math.atan2(sag, 130) * 180) / Math.PI;
-  const beamBlocks = Math.min(3, Math.ceil(load - 0.3));
-  const trussBlocks = Math.min(8, Math.ceil(load - 0.3));
+  // the snap plays out over the next ~0.6 kg of scrolling, speeding up like a fall
+  const snap = seg(load, BEAM_SNAPS, BEAM_SNAPS + 0.6) ** 2;
+  const fly = seg(load, BEAM_SNAPS, BEAM_SNAPS + 0.35);
+  const halfTurn = broken ? tilt + (32 - tilt) * snap : tilt;
   // Warren truss: 6 panels, bottom chord y=282, top chord y=248
   const tr = load / TRUSS_LIMIT;
   const xs = [30, 73.3, 116.7, 160, 203.3, 246.7, 290];
@@ -740,25 +794,29 @@ function BridgeBreak({ load }: { load: number }) {
   const top = xs.slice(0, -1).map((x, i) => [(x + xs[i + 1]) / 2, 248 + dip((x + xs[i + 1]) / 2)] as const);
   const mix = (c: string) => `color-mix(in srgb, ${c} ${Math.round(Math.min(1, tr * 1.05) * 100)}%, var(--ink))`;
   const w = 1.6 + tr * 1.8;
-  const block = (i: number, x: number, y: number, show: boolean, fall: boolean) => (
-    <rect
-      key={i}
-      x={x - 12}
-      y={y - (i + 1) * 9}
-      width={24}
-      height={8}
-      rx={1}
-      fill="url(#pb-hatch)"
-      stroke="currentColor"
-      strokeWidth="1.3"
-      className="bb-block"
-      style={{
-        opacity: show ? 1 : 0,
-        transform: fall ? `translate(${(i - 1) * 9}px, ${46 + i * 4}px) rotate(${(i - 1) * 25 + 10}deg)` : show ? "none" : "translateY(-14px)",
-        transformOrigin: `${x}px ${y - i * 9 - 4}px`,
-      }}
-    />
-  );
+  // weight i slides down onto the bridge as the load passes i + 0.3 kg; `fall` (0..1) tips it off a broken beam
+  const block = (i: number, x: number, y: number, fall: number) => {
+    const a = seg(load, i + 0.3, i + 0.55);
+    return (
+      <rect
+        key={i}
+        x={x - 12}
+        y={y - (i + 1) * 9}
+        width={24}
+        height={8}
+        rx={1}
+        fill="url(#pb-hatch)"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        className="bb-block"
+        style={{
+          opacity: a,
+          transform: `translate(${(i - 1) * 9 * fall}px, ${(46 + i * 4) * fall - 14 * (1 - a)}px) rotate(${((i - 1) * 25 + 10) * fall}deg)`,
+          transformOrigin: `${x}px ${y - i * 9 - 4}px`,
+        }}
+      />
+    );
+  };
   return (
     <svg viewBox="0 0 320 340" className="w-full max-w-[460px] text-ink overflow-visible" aria-label={`Two bridges carrying ${load.toFixed(1)} kg`}>
       {/* ---- flat beam ---- */}
@@ -771,13 +829,13 @@ function BridgeBreak({ load }: { load: number }) {
       </g>
       <path d="M0 124 H320" stroke="currentColor" strokeWidth="1.4" />
       <g className={creak ? "bb-creak" : undefined} style={{ transformOrigin: "160px 80px" }}>
-        <g className={`bb-half ${broken ? "is-broken" : ""}`} style={{ transformOrigin: "30px 80px", transform: `rotate(${broken ? 32 : tilt}deg)` }}>
+        <g className="bb-half" style={{ transformOrigin: "30px 80px", transform: `rotate(${halfTurn}deg)` }}>
           <path d="M30 80 H160" stroke={beamCol} strokeWidth="4" strokeLinecap="round" />
         </g>
-        <g className={`bb-half ${broken ? "is-broken" : ""}`} style={{ transformOrigin: "290px 80px", transform: `rotate(${broken ? -32 : -tilt}deg)` }}>
+        <g className="bb-half" style={{ transformOrigin: "290px 80px", transform: `rotate(${-halfTurn}deg)` }}>
           <path d="M160 80 H290" stroke={beamCol} strokeWidth="4" strokeLinecap="round" />
         </g>
-        {[...Array(3)].map((_, i) => block(i, 160, 78 + sag, i < beamBlocks, broken))}
+        {[...Array(3)].map((_, i) => block(i, 160, 78 + sag, snap))}
       </g>
       {/* splinters fly out where it snapped */}
       <g stroke="var(--red)" strokeWidth="1.6" strokeLinecap="round">
@@ -792,7 +850,7 @@ function BridgeBreak({ load }: { load: number }) {
             key={i}
             d="M157 86 h7"
             className="bb-splinter"
-            style={{ opacity: broken ? 1 : 0, transform: broken ? `translate(${dx}px, ${dy}px) rotate(${rot}deg)` : "none", transformOrigin: "160px 86px" }}
+            style={{ opacity: broken ? 1 : 0, transform: `translate(${dx * fly}px, ${dy * fly}px) rotate(${rot * fly}deg)`, transformOrigin: "160px 86px" }}
           />
         ))}
       </g>
@@ -822,7 +880,7 @@ function BridgeBreak({ load }: { load: number }) {
           strokeWidth={w * 0.8}
         />
       </g>
-      {[...Array(8)].map((_, i) => block(i, 160, top[2][1] + 1 + 0.5 * (top[3][1] - top[2][1]), i < trussBlocks, false))}
+      {[...Array(8)].map((_, i) => block(i, 160, top[2][1] + 1 + 0.5 * (top[3][1] - top[2][1]), 0))}
       <g className="bb-stamp" style={{ opacity: load >= MAX_LOAD - 0.05 ? 1 : 0, transform: load >= MAX_LOAD - 0.05 ? "rotate(-6deg) scale(1)" : "rotate(-6deg) scale(1.6)", transformOrigin: "248px 196px" }}>
         <rect x="184" y="182" width="128" height="26" rx="3" fill="var(--sheet)" stroke="var(--green)" strokeWidth="2" />
         <text x="248" y="200" textAnchor="middle" className="hand" fontSize="14" fill="var(--green)">

@@ -319,22 +319,14 @@ body {
   fill: var(--navy);
   stroke: var(--navy);
 }
-/* Bridge-break section: the beam halves follow the scroll quickly, but fall like they have weight when it snaps */
-.bb-half {
-  transition: transform 0.12s linear;
-}
-.bb-half.is-broken {
-  transition: transform 0.55s cubic-bezier(0.55, 0, 1, 0.45);
-}
-.bb-block {
-  transition:
-    opacity 0.18s ease-out,
-    transform 0.5s cubic-bezier(0.55, 0, 1, 0.45);
-}
+/* Bridge-break section (and the hero bench): every part is positioned from the scroll, so these
+   short transitions only smooth out the steps between scroll events */
+.bb-half,
+.bb-block,
 .bb-splinter {
   transition:
-    opacity 0.15s,
-    transform 0.45s cubic-bezier(0.2, 0.8, 0.3, 1);
+    opacity 0.15s linear,
+    transform 0.12s linear;
 }
 .bb-stamp {
   transition:
