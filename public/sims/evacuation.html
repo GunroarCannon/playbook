@@ -1,0 +1,192 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Evacuation Bench — everyone out of a hall. People are spread through the hall; when the alarm has been noticed
+ * (alarmDelayS) each walks to the nearest open exit (straight line + 20% for chairs and aisles) at the crowd's speed.
+ * A door lets through at most  specific flow x width  people per second (adults ~1.3 people per metre per second),
+ * so crowds queue at the doors. Total time = when the last person is out. Passes within targetMin minutes.
+ * For big crowds each dot stands for several people.
+ */
+const CROWD = {
+  adults:   { name: "adults", speed: 1.2, flow: 1.3 },
+  children: { name: "school children", speed: 1.0, flow: 1.4 },
+  elderly:  { name: "older people", speed: 0.7, flow: 0.9 },
+  mixed:    { name: "mixed crowd with wheelchair users", speed: 0.9, flow: 1.0 },
+};
+const MAX_DOTS = 360;
+
+function exitPositions(n, L, Wd) {
+  // spread exits around the walls: alternate long walls, then the ends
+  const spots = [];
+  for (let k = 0; k < n; k++) {
+    const side = k % 4, slot = Math.floor(k / 4), per = Math.ceil(n / 4);
+    const f = (slot + 1) / (per + 1);
+    if (side === 0) spots.push({ x: L * f, y: 0, nx: 0, ny: -1 });
+    else if (side === 1) spots.push({ x: L * (1 - f), y: Wd, nx: 0, ny: 1 });
+    else if (side === 2) spots.push({ x: L, y: Wd * f, nx: 1, ny: 0 });
+    else spots.push({ x: 0, y: Wd * (1 - f), nx: -1, ny: 0 });
+  }
+  return spots;
+}
+
+function simulate(p) {
+  const crowd = CROWD[p.crowd] || CROWD.adults;
+  const people = Math.round(+p.people), L = +p.hallM, Wd = L * 0.6;
+  const exits = exitPositions(Math.round(+p.exits), L, Wd);
+  if (p.blocked && exits.length) exits[0].blocked = true;
+  const open = exits.filter((e) => !e.blocked);
+  const k = Math.max(1, Math.ceil(people / MAX_DOTS)), nDots = Math.ceil(people / k);
+  const rate = crowd.flow * +p.exitWidthM; // people per second per door
+  const r = Bench.D.rng(42);
+  const dots = [];
+  for (let i = 0; i < nDots; i++) {
+    const x = 0.04 * L + r() * 0.92 * L, y = 0.06 * Wd + r() * 0.88 * Wd;
+    let best = null, bd = Infinity;
+    for (const e of open) { const d = Math.hypot(e.x - x, e.y - y); if (d < bd) { bd = d; best = e; } }
+    const walk = (bd * 1.2) / (crowd.speed * (0.85 + r() * 0.3));
+    dots.push({ x, y, exit: best, arrive: +p.alarmDelayS + walk, out: 0, rank: 0 });
+  }
+  for (const e of open) {
+    const q = dots.filter((d) => d.exit === e).sort((a, b) => a.arrive - b.arrive);
+    let last = -Infinity;
+    q.forEach((d, i) => { d.out = Math.max(d.arrive, last + k / rate); last = d.out; d.rank = i; });
+    e.count = q.length * k; e.last = last;
+  }
+  const total = open.length ? Math.max(...dots.map((d) => d.out)) : Infinity;
+  const walkOnly = open.length ? Math.max(...dots.map((d) => d.arrive)) : Infinity;
+  const busiest = open.reduce((a, e) => (!a || e.count > a.count ? e : a), null);
+  return { crowd, people, L, Wd, exits, open, dots, k, rate, total, walkOnly, busiest, ok: total <= +p.targetMin * 60 };
+}
+
+const mmss = (s) => { if (!Number.isFinite(s)) return "never"; const r = Math.round(s); return `${Math.floor(r / 60)}:${String(r % 60).padStart(2, "0")}`; };
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  Bench.metrics({
+    stressRatio: Number.isFinite(R.total) ? R.total / (+p.targetMin * 60) : 3,
+    label: `everyone out in ${mmss(R.total)} (target ${mmss(+p.targetMin * 60)}) · doors pass ${(R.rate * R.open.length).toFixed(1)} people/s`,
+    values: { totalSeconds: Number.isFinite(R.total) ? Math.round(R.total) : -1, walkingSeconds: Number.isFinite(R.walkOnly) ? Math.round(R.walkOnly) : -1, openExits: R.open.length },
+  });
+}
+
+Bench.init({
+  params: { people: 400, hallM: 30, exits: 2, exitWidthM: 1.2, crowd: "adults", alarmDelayS: 30, blocked: false, targetMin: 2.5 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, dur: 7, done: false, p: { ...p } }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+    const prog = anim ? Math.min(1, (now - anim.t0) / anim.dur) : 0;
+    if (anim && !anim.done && prog >= 1) { anim.done = true; finish(anim.p); }
+    const endT = Number.isFinite(R.total) ? R.total * 1.05 + 3 : 60;
+    const simT = prog * endT;
+
+    D.text(`${R.people} ${R.crowd.name} in a ${p.hallM} × ${Math.round(R.Wd)} m hall · ${R.open.length} open exit${R.open.length === 1 ? "" : "s"} ${p.exitWidthM} m wide`, 18, 28, { size: 14 });
+    D.text(`alarm noticed after ${p.alarmDelayS} s · walk ${R.crowd.speed} m/s · each door passes ${R.rate.toFixed(1)} people/s${R.k > 1 ? ` · 1 dot = ${R.k} people` : ""}`, 18, 48, { size: 12, mono: true, color: C.ink2 });
+
+    // ---- floor plan
+    const side = 180;
+    const availW = W - side - 70, availH = H - 120;
+    const s = Math.min(availW / R.L, availH / R.Wd);
+    const hx = 40, hy = 76, hw = R.L * s, hh = R.Wd * s;
+    const P = (x, y) => [hx + x * s, hy + y * s];
+    ctx.fillStyle = C.ink; ctx.globalAlpha = 0.03; ctx.fillRect(hx, hy, hw, hh); ctx.globalAlpha = 1;
+    D.rect(hx, hy, hw, hh, { width: 2.2, seed: 1 });
+    const doorPx = Math.max(10, +p.exitWidthM * s);
+    for (const e of R.exits) {
+      const [ex, ey] = P(e.x, e.y);
+      const horiz = e.ny !== 0;
+      ctx.fillStyle = C.paper; horiz ? ctx.fillRect(ex - doorPx / 2, ey - 3, doorPx, 6) : ctx.fillRect(ex - 3, ey - doorPx / 2, 6, doorPx);
+      const lx = ex + e.nx * 22, ly = ey + e.ny * 18 + (e.ny === 0 ? 4 : 4);
+      if (e.blocked) { D.text("✗ blocked", lx, ly, { size: 11, align: "center", color: C.red }); D.line(ex - 7, ey - 7, ex + 7, ey + 7, { color: C.red, width: 2.4, single: true }); D.line(ex - 7, ey + 7, ex + 7, ey - 7, { color: C.red, width: 2.4, single: true }); }
+      else D.text("EXIT", lx, ly, { size: 10, mono: true, align: "center", color: C.green });
+    }
+    // dots
+    const rr = Math.max(1.6, Math.min(3.2, s * 0.25));
+    const gone = new Map(); // how many have already left through each door
+    for (const d of R.dots) if (d.exit && anim && simT >= d.out) gone.set(d.exit, (gone.get(d.exit) || 0) + 1);
+    for (const d of R.dots) {
+      if (!d.exit) { const [x, y] = P(d.x, d.y); D.circle(x, y, rr, { color: C.red, fill: C.red, rough: 0.2 }); continue; }
+      const e = d.exit;
+      let x, y, a = 1, col = C.navy;
+      const [dx, dy] = P(e.x, e.y);
+      if (!anim || simT < +p.alarmDelayS) { [x, y] = P(d.x, d.y); col = anim ? C.ink2 : C.navy; }
+      else if (simT < d.arrive) {
+        const f = (simT - +p.alarmDelayS) / Math.max(0.01, d.arrive - +p.alarmDelayS);
+        const [sx, sy] = P(d.x, d.y);
+        x = sx + (dx - e.nx * 8 - sx) * f; y = sy + (dy - e.ny * 8 - sy) * f;
+      } else if (simT < d.out) {
+        // queuing at the door: count how many are still ahead
+        const q = Math.max(0, d.rank - (gone.get(e) || 0)), ring = Math.sqrt(q) * rr * 2.6 + rr * 2, ang = (q * 2.4) % Math.PI - Math.PI / 2;
+        const ix = -e.nx, iy = -e.ny; // pointing into the hall
+        x = dx + ix * ring * Math.cos(ang * 0.6) + iy * ring * Math.sin(ang) * 0.9;
+        y = dy + iy * ring * Math.cos(ang * 0.6) + ix * ring * Math.sin(ang) * 0.9;
+        col = C.amber;
+      } else {
+        const f = Math.min(1, (simT - d.out) / 3);
+        x = dx + e.nx * (10 + f * 30); y = dy + e.ny * (10 + f * 30); a = 1 - f; col = C.green;
+        if (a <= 0) continue;
+      }
+      ctx.globalAlpha = a; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+    }
+    if (anim && simT < +p.alarmDelayS) D.text("ALARM! People haven't reacted yet…", hx + hw / 2, hy + hh / 2, { size: 14, align: "center", color: C.red });
+    D.dim(hx, hy + hh + 16, hx + hw, hy + hh + 16, `${p.hallM} m`, { color: C.ink3 });
+
+    // ---- chart: people still inside
+    const gx = W - side - 10, gw = side - 10, gy0 = 90, gh = Math.max(100, H - 190), gy = gy0 + gh;
+    D.text("still inside", gx, gy0 - 10, { size: 11, color: C.ink2 });
+    D.line(gx, gy, gx + gw, gy, { width: 1.3 }); D.line(gx, gy0, gx, gy, { width: 1.3 });
+    const tmax = Math.max(endT, +p.targetMin * 60 * 1.1);
+    const X = (t) => gx + (t / tmax) * gw, Y = (n) => gy - (n / R.people) * gh;
+    const tx = X(+p.targetMin * 60);
+    D.line(tx, gy0, tx, gy, { color: C.green, dash: [5, 4], width: 1.2, single: true });
+    D.text(`target ${mmss(+p.targetMin * 60)}`, tx, gy + 26, { size: 10, mono: true, align: "center", color: C.green });
+    const outs = R.dots.map((d) => d.out).sort((a, b) => a - b);
+    ctx.strokeStyle = R.ok ? C.navy : C.red; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(X(0), Y(R.people));
+    const lim = anim ? simT : endT;
+    let inside = R.people;
+    for (const t of outs) { if (t > lim) break; ctx.lineTo(X(t), Y(inside)); inside = Math.max(0, inside - R.k); ctx.lineTo(X(t), Y(inside)); }
+    ctx.lineTo(X(Math.min(lim, tmax)), Y(inside)); ctx.stroke();
+    D.text(`${inside} left`, gx + gw, gy0 + 10, { size: 11, mono: true, align: "right", color: inside ? C.ink : C.green });
+    D.text(`0:00`, gx, gy + 13, { size: 9, mono: true, color: C.ink3 });
+    D.text(anim ? mmss(simT) : mmss(R.total), gx + gw / 2, gy + 44, { size: 18, mono: true, align: "center", color: anim && simT > +p.targetMin * 60 && inside ? C.red : C.ink });
+
+    if (anim && anim.done) D.stamp(R.ok ? `ALL OUT IN ${mmss(R.total)}` : Number.isFinite(R.total) ? `TOOK ${mmss(R.total)}` : "NO WAY OUT", hx + hw / 2, hy + hh * 0.45, R.ok ? C.green : C.red);
+    if (!anim) D.text("(projection — press RUN TEST to sound the alarm)", 18, H - 12, { size: 11, color: C.ink3 });
+  },
+});
+
+function finish(p) {
+  const desc = `${R.people} ${R.crowd.name} in a ${p.hallM} m hall, ${R.open.length} open exit${R.open.length === 1 ? "" : "s"} ${p.exitWidthM} m wide${p.blocked ? " (one blocked)" : ""}, alarm noticed after ${p.alarmDelayS} s`;
+  const queueing = R.total - R.walkOnly;
+  const stats = Number.isFinite(R.total) ? `everyone is out in ${mmss(R.total)} (walking alone would take ${mmss(R.walkOnly)}; the rest is queuing at the doors)` : "nobody can get out";
+  const why = !R.open.length
+    ? "every exit is blocked"
+    : queueing > R.walkOnly * 0.5
+      ? `the doors are the bottleneck: ${R.open.length} × ${p.exitWidthM} m passes only ${(R.rate * R.open.length).toFixed(1)} people a second, and the busiest exit has ${R.busiest.count} people to let through`
+      : `it takes too long to notice the alarm and walk out (${mmss(R.walkOnly)} before the last person reaches a door)`;
+  Bench.result({
+    passed: R.ok,
+    summary: `${desc}: ${stats}.`,
+    failureReason: R.ok ? undefined : `over the ${mmss(+p.targetMin * 60)} target: ${why}`,
+    score: R.ok ? Math.round(+p.targetMin * 60 - R.total) : undefined, scoreLabel: "seconds to spare",
+    metrics: { totalSeconds: Number.isFinite(R.total) ? Math.round(R.total) : -1, walkingSeconds: Number.isFinite(R.walkOnly) ? Math.round(R.walkOnly) : -1, openExits: R.open.length, busiestExitPeople: R.busiest ? R.busiest.count : 0 },
+  });
+}
+</script>
+</body>
+</html>

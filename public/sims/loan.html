@@ -1,0 +1,154 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Loan Repayment Bench — fixed monthly repayments.
+ * Reducing balance: interest each month is charged only on what is still owed (standard annuity formula).
+ * Flat rate: interest is charged on the FULL amount for the whole term, so the true cost is much higher.
+ * An upfront fee comes off the money you receive. The "true yearly rate" is the effective annual rate (IRR)
+ * of what you actually received against what you repay.
+ */
+function schedule(P, ratePct, n, method) {
+  const r = ratePct / 100 / 12, rows = [];
+  let bal = P, pay;
+  if (method === "flat") {
+    const interestTotal = P * (ratePct / 100) * (n / 12);
+    pay = (P + interestTotal) / n;
+    for (let k = 1; k <= n; k++) { bal -= P / n; rows.push({ k, interest: interestTotal / n, principal: P / n, bal: Math.max(0, bal) }); }
+  } else {
+    pay = r > 0 ? (P * r) / (1 - Math.pow(1 + r, -n)) : P / n;
+    for (let k = 1; k <= n; k++) { const i = bal * r, pr = pay - i; bal -= pr; rows.push({ k, interest: i, principal: pr, bal: Math.max(0, bal) }); }
+  }
+  return { pay, rows, interest: pay * n - P };
+}
+
+/** effective yearly rate: monthly i where sum pay/(1+i)^k = received */
+function trueRate(pay, n, received) {
+  if (received <= 0) return 0;
+  let lo = 0, hi = 1;
+  const pv = (i) => { let s = 0; for (let k = 1; k <= n; k++) s += pay / Math.pow(1 + i, k); return s; };
+  if (pv(0) <= received) return 0;
+  for (let it = 0; it < 60; it++) { const mid = (lo + hi) / 2; if (pv(mid) > received) lo = mid; else hi = mid; }
+  return (Math.pow(1 + lo, 12) - 1) * 100;
+}
+
+function simulate(p) {
+  const P = +p.amount, n = Math.max(1, Math.round(+p.months));
+  const s = schedule(P, +p.ratePct, n, p.method);
+  const other = schedule(P, +p.ratePct, n, p.method === "flat" ? "reducing" : "flat");
+  const fee = (P * +p.feePct) / 100, received = P - fee;
+  const limit = (+p.income * +p.maxSharePct) / 100;
+  return {
+    P, n, ...s, other, fee, received, limit,
+    total: s.pay * n, cost: s.pay * n - received,
+    apr: trueRate(s.pay, n, received),
+    sharePct: +p.income > 0 ? (100 * s.pay) / +p.income : Infinity,
+    ok: s.pay <= limit + 1e-6,
+  };
+}
+
+const money = (v) => Math.round(v).toLocaleString();
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  Bench.metrics({
+    stressRatio: R.limit > 0 ? Math.min(2, R.pay / R.limit) : 2,
+    label: `${money(R.pay)}/month · ${Number.isFinite(R.sharePct) ? Math.round(R.sharePct) + "% of income" : "no income set"} · true rate ${R.apr.toFixed(0)}%/yr`,
+    values: { monthly: Math.round(R.pay), totalRepaid: Math.round(R.total), totalInterest: Math.round(R.interest), trueRatePct: +R.apr.toFixed(1) },
+  });
+}
+
+Bench.init({
+  params: { amount: 500000, ratePct: 24, method: "reducing", months: 18, feePct: 1, income: 150000, maxSharePct: 30 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, dur: Math.min(6, 2.5 + R.n * 0.05), done: false, p: { ...p } }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+    const prog = anim ? Math.min(1, (now - anim.t0) / anim.dur) : 1;
+    if (anim && !anim.done && prog >= 1) { anim.done = true; finish(anim.p); }
+    const upto = Math.max(1, Math.ceil(prog * R.n));
+
+    D.text(`Borrow ${money(R.P)} at ${p.ratePct}% a year (${p.method === "flat" ? "flat rate" : "reducing balance"}) over ${R.n} months`, 18, 28, { size: 14 });
+    D.text(`pay ${money(R.pay)} a month · repay ${money(R.total)} in total · true yearly rate ${R.apr.toFixed(1)}%`, 18, 48, { size: 12, mono: true, color: C.ink2 });
+
+    // ---- schedule chart: each month's repayment split into principal + interest, balance line on top
+    const side = 150;
+    const gx = 74, gy0 = 78, gw = Math.max(200, W - gx - side - 50), gh = Math.max(110, H - 170), gy = gy0 + gh;
+    D.line(gx, gy, gx + gw, gy, { width: 1.3 }); D.line(gx, gy0, gx, gy, { width: 1.3 });
+    const maxPay = R.pay * 1.15;
+    const bw = gw / R.n;
+    for (let i = 0; i < upto; i++) {
+      const row = R.rows[i], x = gx + i * bw + Math.min(2, bw * 0.15), w = Math.max(1, bw - Math.min(4, bw * 0.3));
+      const hp = (row.principal / maxPay) * gh, hi = (row.interest / maxPay) * gh;
+      ctx.globalAlpha = 0.5; ctx.fillStyle = C.navy; ctx.fillRect(x, gy - hp, w, hp);
+      ctx.fillStyle = C.red; ctx.fillRect(x, gy - hp - hi, w, hi); ctx.globalAlpha = 1;
+    }
+    for (let k = 0; k <= 4; k++) D.text(money((maxPay * k) / 4), gx - 6, gy - (k / 4) * gh + 4, { size: 10, mono: true, align: "right", color: C.ink3 });
+    const step = R.n > 48 ? 12 : R.n > 18 ? 6 : R.n > 8 ? 2 : 1;
+    for (let m = step; m <= R.n; m += step) D.text(`${m}`, gx + (m - 0.5) * bw, gy + 13, { size: 10, mono: true, align: "center", color: C.ink3 });
+    D.text("month", gx + gw, gy + 26, { size: 10, mono: true, align: "right", color: C.ink3 });
+    // balance owed (own scale: full height = amount borrowed)
+    ctx.strokeStyle = C.amber; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.moveTo(gx, gy0);
+    for (let i = 0; i < upto; i++) ctx.lineTo(gx + (i + 1) * bw, gy0 + (1 - R.rows[i].bal / R.P) * gh);
+    ctx.stroke();
+    // limit line
+    if (R.limit > 0 && R.limit < maxPay * 1.4) {
+      const ly = gy - (Math.min(R.limit, maxPay) / maxPay) * gh;
+      D.line(gx, ly, gx + gw, ly, { color: R.ok ? C.green : C.red, dash: [6, 4], width: 1.3, single: true });
+      D.text(`most you can pay: ${money(R.limit)}`, gx + gw - 4, ly - 5, { size: 11, align: "right", color: R.ok ? C.green : C.red });
+    }
+    [["interest (the bank's share)", C.red], ["paying off what you borrowed", C.navy], ["still owed", C.amber]].forEach(([t, c], i) => {
+      D.line(gx + 10, gy + 44 + i * 15, gx + 28, gy + 44 + i * 15, { color: c, width: 3, single: true }); D.text(t, gx + 34, gy + 48 + i * 15, { size: 11 });
+    });
+
+    // ---- pay-slip: income vs repayment
+    const sx = W - side - 20, sy = gy0, sh = gh;
+    D.rect(sx, sy, side, sh + 40, { fill: C.paper, seed: 31 });
+    D.text("your month", sx + side / 2, sy + 18, { size: 13, align: "center" });
+    const bx = sx + 40, bwid = side - 80, by0 = sy + 30, bh = sh - 20;
+    D.rect(bx, by0, bwid, bh, { seed: 32 });
+    const inc = Math.max(1, +p.income), payFrac = D.clamp(R.pay / inc, 0, 1) * Math.min(1, prog * 1.5);
+    ctx.fillStyle = R.ok ? C.navy : C.red; ctx.globalAlpha = 0.35; ctx.fillRect(bx + 2, by0 + bh - payFrac * bh, bwid - 4, payFrac * bh); ctx.globalAlpha = 1;
+    const limY = by0 + bh - D.clamp(+p.maxSharePct / 100, 0, 1) * bh;
+    D.line(bx - 8, limY, bx + bwid + 8, limY, { color: C.green, dash: [4, 3], width: 1.4, single: true });
+    D.text(`${p.maxSharePct}%`, bx + bwid + 10, limY + 4, { size: 10, mono: true, color: C.green });
+    D.text(`${Number.isFinite(R.sharePct) ? Math.round(R.sharePct) : "∞"}%`, bx + bwid / 2, by0 + bh - payFrac * bh - 6, { size: 14, mono: true, align: "center", color: R.ok ? C.navy : C.red });
+    D.text(`of ${money(+p.income)}`, sx + side / 2, sy + sh + 28, { size: 11, mono: true, align: "center", color: C.ink2 });
+    D.icon("wallet", sx + 22, sy + 16, 16, { color: C.ink2 });
+
+    if (anim && anim.done) D.stamp(R.ok ? "AFFORDABLE" : "TOO MUCH A MONTH", gx + gw / 2, gy0 + gh * 0.35, R.ok ? C.green : C.red);
+    if (!anim) D.text("(projection — press RUN TEST to watch the months go by)", 18, H - 12, { size: 11, color: C.ink3 });
+  },
+});
+
+function finish(p) {
+  const desc = `${money(R.P)} over ${R.n} months at ${p.ratePct}% ${p.method === "flat" ? "flat" : "reducing balance"}${+p.feePct ? ` with a ${p.feePct}% fee` : ""}`;
+  const stats = `${money(R.pay)} a month (${Number.isFinite(R.sharePct) ? Math.round(R.sharePct) : "∞"}% of a ${money(+p.income)} income), ${money(R.interest)} interest in total, true yearly rate ${R.apr.toFixed(1)}%`;
+  const cmp = p.method === "flat"
+    ? `The same loan on a reducing balance would cost ${money(R.other.interest)} interest instead of ${money(R.interest)}.`
+    : `As a flat-rate loan it would cost ${money(R.other.interest)} interest.`;
+  Bench.result({
+    passed: R.ok,
+    summary: `${desc}: ${stats}. ${cmp}`,
+    failureReason: R.ok ? undefined : `the repayment ${money(R.pay)} is more than ${p.maxSharePct}% of income (${money(R.limit)}); a longer term, a smaller amount or a lower rate would bring it down`,
+    score: R.ok ? Math.round(R.limit - R.pay) : undefined, scoreLabel: "left in the monthly budget",
+    metrics: { monthly: Math.round(R.pay), totalRepaid: Math.round(R.total), totalInterest: Math.round(R.interest), trueRatePct: +R.apr.toFixed(1), sharePct: Number.isFinite(R.sharePct) ? Math.round(R.sharePct) : 999 },
+  });
+}
+</script>
+</body>
+</html>

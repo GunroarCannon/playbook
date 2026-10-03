@@ -1,0 +1,156 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Egg Drop Bench — the classic school contest.
+ * Fall: m dv/dt = m g - 1/2 rho (Cd A)total v^2, with the parachute open from the start (Cd 1.4) plus the
+ * package itself (Cd 0.6, area grows with padding). Landing: the egg stops over the crush distance
+ * s = padding thickness x how much of it usefully crushes + the ground's give. Peak deceleration ~ 1.4 x v^2 / (2 s)
+ * (crushing is not perfectly even). A padded raw egg survives about 60 g.
+ */
+const RHO = 1.2, G = 9.81, LIMIT_G = 60;
+const CHUTE = { none: 0, small: 0.15, medium: 0.4, large: 0.9 };
+const PAD = { none: 0, paper: 0.5, sponge: 0.6, bubble: 0.7, straws: 0.8 };
+const GIVE = { grass: 0.01, sand: 0.03, concrete: 0.0015 };
+
+function simulate(p) {
+  const m = +p.massG / 1000, H0 = +p.heightM;
+  const padM = p.padding === "none" ? 0 : +p.paddingCm / 100;
+  const cdA = 1.4 * (CHUTE[p.chute] ?? 0) + 0.6 * (0.008 + padM * 0.12);
+  let y = H0, v = 0, t = 0;
+  const path = [{ t: 0, y, v }];
+  const dt = 0.002;
+  while (y > 0 && t < 60) {
+    const a = G - (0.5 * RHO * cdA * v * v) / m;
+    v += a * dt; y -= v * dt; t += dt;
+    if (path.length < 4000 && Math.round(t / dt) % 10 === 0) path.push({ t, y: Math.max(0, y), v });
+  }
+  path.push({ t, y: 0, v });
+  const s = padM * (PAD[p.padding] ?? 0) + (GIVE[p.surface] ?? 0.005);
+  const peak = (1.4 * v * v) / (2 * s);
+  const peakG = peak / G;
+  const terminal = Math.sqrt((2 * m * G) / (RHO * cdA));
+  return { v, T: t, path, s, peakG, terminal, ok: peakG <= LIMIT_G, H0 };
+}
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  Bench.metrics({
+    stressRatio: Math.min(3, R.peakG / LIMIT_G),
+    label: `lands at ${R.v.toFixed(1)} m/s (${(R.v * 3.6).toFixed(0)} km/h) · stops in ${(R.s * 100).toFixed(1)} cm · ${R.peakG.toFixed(0)} g on the egg`,
+    values: { impactMs: +R.v.toFixed(2), peakG: Math.round(R.peakG), fallS: +R.T.toFixed(2), stopCm: +(R.s * 100).toFixed(1) },
+  });
+}
+
+function egg(D, x, y, s, squash, broken, C) {
+  const { ctx } = D;
+  ctx.save(); ctx.translate(x, y); ctx.scale(1 + squash * 0.35, 1 - squash * 0.4);
+  ctx.fillStyle = C.paper; ctx.strokeStyle = broken ? C.red : C.ink; ctx.lineWidth = 1.8;
+  ctx.beginPath(); ctx.ellipse(0, -s * 0.62, s * 0.42, s * 0.62, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  if (broken) {
+    ctx.beginPath(); ctx.moveTo(-s * 0.35, -s * 0.7); ctx.lineTo(-s * 0.1, -s * 0.55); ctx.lineTo(-s * 0.2, -s * 0.4); ctx.lineTo(s * 0.1, -s * 0.3); ctx.lineTo(s * 0.05, -s * 0.15); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+Bench.init({
+  params: { heightM: 6, chute: "none", padding: "sponge", paddingCm: 3, massG: 150, surface: "grass" },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, fallDur: D_FALL(R.T), done: false, p: { ...p } }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+    const t = anim ? now - anim.t0 : 0;
+    const fallDur = anim ? anim.fallDur : 1;
+    const landed = anim && t >= fallDur;
+    if (anim && !anim.done && t >= fallDur + 1.6) { anim.done = true; finish(anim.p); }
+
+    D.text(`Drop from ${p.heightM} m · ${p.chute === "none" ? "no parachute" : p.chute + " parachute"} · ${p.padding === "none" ? "no padding" : `${p.paddingCm} cm of ${p.padding}`} · onto ${p.surface}`, 18, 28, { size: 14 });
+    D.text(`hits the ground at ${R.v.toFixed(1)} m/s after ${R.T.toFixed(1)} s · stops in ${(R.s * 100).toFixed(1)} cm · ${R.peakG.toFixed(0)} g (an egg cracks above ~${LIMIT_G} g)`, 18, 48, { size: 12, mono: true, color: C.ink2 });
+
+    const gy = H - 46, top = 96, bx = Math.max(120, W * 0.3);
+    const Y = (h) => gy - (h / Math.max(1, R.H0)) * (gy - top);
+    // building
+    D.rect(bx - 110, Y(R.H0) - 10, 90, gy - Y(R.H0) + 10, { seed: 2 });
+    for (let k = 0; k < Math.min(8, Math.floor((gy - Y(R.H0)) / 40)); k++) D.rect(bx - 96 + (k % 2) * 40, Y(R.H0) + 6 + Math.floor(k / 2) * 40, 22, 22, { color: C.ink3, seed: 10 + k });
+    D.line(bx - 20, Y(R.H0) - 10, bx + 8, Y(R.H0) - 10, { width: 2, seed: 3 });
+    D.dim(bx - 130, gy, bx - 130, Y(R.H0), `${p.heightM} m`, { color: C.ink3 });
+    // ground
+    if (p.surface === "concrete") { D.rect(30, gy, W - 60, 16, { hatch: true, seed: 4 }); }
+    else if (p.surface === "sand") { const r = D.rng(5); D.line(30, gy, W - 30, gy, { width: 2, color: C.amber }); for (let k = 0; k < 70; k++) { ctx.fillStyle = C.amber; ctx.fillRect(30 + r() * (W - 60), gy + 3 + r() * 12, 1.6, 1.6); } }
+    else { D.ground(30, W - 30, gy); const r = D.rng(6); for (let k = 0; k < 40; k++) { const x = 30 + r() * (W - 60); D.line(x, gy, x - 3, gy - 7, { color: C.green, width: 1.2, single: true, seed: 50 + k }); } }
+
+    // falling package
+    let h = R.H0, v = 0;
+    if (anim) {
+      const ft = Math.min(t, fallDur) / fallDur * R.T;
+      let i = 0; while (i < R.path.length - 1 && R.path[i + 1].t < ft) i++;
+      h = R.path[i].y; v = R.path[i].v;
+      if (landed) h = 0, v = R.v;
+    }
+    const ex = bx + 40, ey = Y(h);
+    const sq = landed ? D.clamp((t - fallDur) / 0.12, 0, 1) * (R.ok ? Math.max(0, 1 - (t - fallDur - 0.12) * 3) * D.clamp(R.peakG / LIMIT_G, 0.1, 1) : 1) : 0;
+    const broken = landed && !R.ok;
+    const padPx = p.padding === "none" ? 0 : 6 + +p.paddingCm * 2.2;
+    if (padPx) D.rect(ex - 14 - padPx, ey - 36 - padPx, 28 + padPx * 2, 38 + padPx, { fill: C.paper, color: C.ink2, hatch: p.padding === "straws", seed: 20, rough: 1.5 });
+    egg(D, ex, ey - (padPx ? 2 : 0), 34, sq, broken, C);
+    if (broken) { ctx.fillStyle = C.amber; ctx.globalAlpha = 0.6; ctx.beginPath(); ctx.ellipse(ex + 16, gy - 2, 22, 5, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1; }
+    if (p.chute !== "none" && !(landed && t - fallDur > 0.3)) {
+      const cw = { small: 46, medium: 70, large: 100 }[p.chute], cy = ey - 36 - padPx - 60;
+      ctx.strokeStyle = C.navy; ctx.lineWidth = 1.8; ctx.fillStyle = C.navy; ctx.globalAlpha = 0.12;
+      ctx.beginPath(); ctx.ellipse(ex, cy, cw / 2, 20, 0, Math.PI, 0); ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
+      for (const sx of [-cw / 2, -cw / 6, cw / 6, cw / 2]) D.line(ex + sx, cy, ex + sx * 0.25, ey - 36 - padPx, { color: C.navy, width: 1, single: true, rough: 0.3 });
+    } else if (p.chute !== "none") {
+      D.line(ex + 10, gy - 4, ex + 70, gy - 6, { color: C.navy, width: 1.6, seed: 30 });
+    }
+    // speedometer
+    D.text(`${v.toFixed(1)} m/s`, ex + 60, ey - 20, { size: 13, mono: true, color: C.ink2 });
+    if (p.chute !== "none") D.text(`top speed with this chute: ${R.terminal.toFixed(1)} m/s`, W - 24, 80, { size: 11, align: "right", color: C.navy });
+    // g meter
+    const mx = W - 190, my = 100;
+    D.text("force on the egg", mx, my, { size: 11, color: C.ink2 });
+    D.rect(mx, my + 6, 160, 12, { seed: 91 });
+    const f = D.clamp(R.peakG / (LIMIT_G * 2), 0, 1);
+    ctx.fillStyle = R.ok ? C.green : C.red; ctx.globalAlpha = 0.45; ctx.fillRect(mx + 1, my + 7, 158 * (landed || !anim ? f : 0), 10); ctx.globalAlpha = 1;
+    D.line(mx + 80, my + 2, mx + 80, my + 22, { color: C.red, width: 1.4, single: true });
+    D.text(`${LIMIT_G} g`, mx + 80, my + 34, { size: 10, mono: true, align: "center", color: C.red });
+    if (landed || !anim) D.text(`${R.peakG.toFixed(0)} g`, mx + 160, my + 34, { size: 12, mono: true, align: "right", color: R.ok ? C.green : C.red });
+
+    if (anim && anim.done) D.stamp(R.ok ? "EGG SURVIVES" : "SPLAT", W * 0.66, gy - 120, R.ok ? C.green : C.red);
+    if (!anim) D.text("(projection — press RUN TEST to drop it)", 18, H - 12, { size: 11, color: C.ink3 });
+  },
+});
+
+// fall shown in real time, but at least 1.2 s and at most 5 s
+function D_FALL(T) { return Math.min(5, Math.max(1.2, T)); }
+
+function finish(p) {
+  const desc = `${p.massG} g package dropped ${p.heightM} m with ${p.chute === "none" ? "no parachute" : `a ${p.chute} parachute`}, ${p.padding === "none" ? "no padding" : `${p.paddingCm} cm of ${p.padding} padding`}, onto ${p.surface}`;
+  const stats = `lands at ${R.v.toFixed(1)} m/s after ${R.T.toFixed(1)} s and stops within ${(R.s * 100).toFixed(1)} cm, so the egg feels about ${R.peakG.toFixed(0)} g`;
+  const why = R.v > 4 && p.chute === "none"
+    ? `it lands too fast (${R.v.toFixed(1)} m/s); a parachute cuts the speed the most`
+    : `the egg stops too suddenly (${(R.s * 100).toFixed(1)} cm); thicker padding that crushes gives it more room to slow down`;
+  Bench.result({
+    passed: R.ok,
+    summary: `${desc}: ${stats}.`,
+    failureReason: R.ok ? undefined : `cracked at ${R.peakG.toFixed(0)} g (limit about ${LIMIT_G} g): ${why}`,
+    score: R.ok ? Math.round(LIMIT_G - R.peakG) : undefined, scoreLabel: "g to spare",
+    metrics: { impactMs: +R.v.toFixed(2), peakG: Math.round(R.peakG), fallS: +R.T.toFixed(2), stopCm: +(R.s * 100).toFixed(1) },
+  });
+}
+</script>
+</body>
+</html>

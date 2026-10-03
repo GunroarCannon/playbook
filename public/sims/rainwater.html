@@ -1,0 +1,183 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Rainwater Tank Bench — one year, day by day, starting 1 January.
+ * Inflow (L) = rain (mm) x roof area (m²) x run-off coefficient (1 mm on 1 m² = 1 L).
+ * Use (L/day) = people x litres per person. Overflow is lost when the tank is full.
+ * Monthly rainfall is a typical year for the chosen climate, spread evenly over the month.
+ */
+const CLIMATES = {
+  lagos:   { name: "Lagos",   mm: [13, 43, 100, 145, 210, 315, 180, 60, 140, 190, 70, 20] },
+  abuja:   { name: "Abuja",   mm: [0, 5, 30, 80, 180, 190, 220, 260, 250, 120, 5, 0] },
+  kano:    { name: "Kano",    mm: [0, 0, 2, 10, 50, 100, 200, 250, 110, 10, 0, 0] },
+  nairobi: { name: "Nairobi", mm: [60, 50, 90, 210, 160, 40, 15, 20, 30, 50, 150, 100] },
+};
+const RUNOFF = { metal: 0.85, tile: 0.75, thatch: 0.5 };
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+function simulate(p) {
+  const cl = CLIMATES[p.climate] || CLIMATES.lagos;
+  const cap = +p.tankL, use = +p.people * +p.usePerPerson, k = RUNOFF[p.roof] ?? 0.8;
+  // run a warm-up year first, so 1 January starts with whatever the tank really holds by then
+  let level = cap / 2, dry = 0, overflow = 0, low = Infinity, collected = 0, short = 0;
+  const series = [], dryDays = [];
+  let firstDry = null;
+  for (let year = 0; year < 2; year++) {
+    const count = year === 1;
+    for (let m = 0; m < 12; m++) {
+      const perDay = cl.mm[m] / DAYS[m];
+      for (let d = 0; d < DAYS[m]; d++) {
+        const inflow = perDay * +p.roofM2 * k;
+        level += inflow;
+        let spilled = 0, missing = 0;
+        if (level > cap) { spilled = level - cap; level = cap; }
+        if (level >= use) level -= use;
+        else { missing = use - level; level = 0; }
+        if (!count) continue;
+        collected += inflow; overflow += spilled; short += missing;
+        if (missing > 0) { dry++; dryDays.push(series.length); if (firstDry == null) firstDry = series.length; }
+        low = Math.min(low, level);
+        series.push({ level, month: m });
+      }
+    }
+  }
+  const demand = use * 365;
+  return {
+    cl, cap, use, series, dry, dryDays, firstDry, overflow, collected, low,
+    metPct: demand > 0 ? 100 * (1 - short / demand) : 100,
+    yearDemand: demand, yearRain: cl.mm.reduce((a, b) => a + b, 0),
+  };
+}
+
+function dayLabel(i) {
+  let m = 0; while (m < 11 && i >= DAYS[m]) { i -= DAYS[m]; m++; }
+  return `${i + 1} ${MONTHS[m]}`;
+}
+const L = (v) => (v >= 10000 ? `${(v / 1000).toFixed(0)}k` : Math.round(v).toLocaleString());
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  const allow = +p.allowDryDays;
+  Bench.metrics({
+    stressRatio: R.dry > allow ? Math.min(1.6, 1.02 + (R.dry - allow) / 60) : 0.25 + 0.7 * (1 - R.low / Math.max(1, R.cap)),
+    label: R.dry ? `dry for ${R.dry} days · first on ${dayLabel(R.firstDry)}` : `never runs dry · lowest ${L(R.low)} L`,
+    values: { dryDays: R.dry, demandMetPct: Math.round(R.metPct), overflowL: Math.round(R.overflow), lowestL: Math.round(R.low) },
+  });
+}
+
+Bench.init({
+  params: { climate: "lagos", roofM2: 80, roof: "metal", tankL: 5000, people: 5, usePerPerson: 40, allowDryDays: 0 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, dur: 6, done: false, p: { ...p } }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+    const prog = anim ? Math.min(1, (now - anim.t0) / anim.dur) : 1;
+    if (anim && !anim.done && prog >= 1) { anim.done = true; finish(anim.p); }
+    const upto = Math.max(0, Math.min(364, Math.floor(prog * 364)));
+    const cur = R.series[upto];
+
+    D.text(`${R.cl.name} rain (${R.yearRain} mm a year) on ${p.roofM2} m² of ${p.roof} roof → ${L(p.tankL)} L tank`, 18, 28, { size: 14 });
+    D.text(`${p.people} people x ${p.usePerPerson} L = ${L(R.use)} L a day · collects ${L(R.collected)} L a year, needs ${L(R.yearDemand)} L`, 18, 48, { size: 12, mono: true, color: C.ink2 });
+
+    // ---- chart: monthly rain bars + daily tank level
+    const tankW = 130;
+    const gx = 58, gy0 = 74, gw = Math.max(220, W - gx - tankW - 60), gh = Math.max(120, H - 140), gy = gy0 + gh;
+    const X = (i) => gx + (i / 364) * gw;
+    D.line(gx, gy, gx + gw, gy, { width: 1.3 }); D.line(gx, gy0, gx, gy, { width: 1.3 });
+    const maxMm = Math.max(50, ...R.cl.mm);
+    let start = 0;
+    for (let m = 0; m < 12; m++) {
+      const x0 = X(start), x1 = X(start + DAYS[m] - 1);
+      const bh = (R.cl.mm[m] / maxMm) * gh * 0.45;
+      if (bh > 0.5) D.rect(x0 + 2, gy - bh, x1 - x0 - 4, bh, { fill: C.blue, fillAlpha: 0.14, color: C.blue, width: 1, seed: 40 + m, rough: 0.5 });
+      D.text(MONTHS[m], (x0 + x1) / 2, gy + 14, { size: 10, mono: true, align: "center", color: C.ink3 });
+      start += DAYS[m];
+    }
+    D.text("rain", gx + 4, gy - 6, { size: 10, color: C.blue });
+    // dry spells
+    for (const i of R.dryDays) if (i <= upto) { ctx.fillStyle = C.red; ctx.globalAlpha = 0.16; ctx.fillRect(X(i) - 0.8, gy0, Math.max(1.6, gw / 365 + 0.4), gh); ctx.globalAlpha = 1; }
+    // tank level
+    const Y = (v) => gy - (v / R.cap) * gh;
+    D.line(gx, Y(R.cap), gx + gw, Y(R.cap), { color: C.ink3, dash: [4, 4], width: 1, single: true });
+    D.text(`full ${L(R.cap)} L`, gx + gw - 4, Y(R.cap) - 4, { size: 10, mono: true, align: "right", color: C.ink3 });
+    ctx.strokeStyle = C.navy; ctx.lineWidth = 2.2; ctx.beginPath();
+    for (let i = 0; i <= upto; i++) { const s = R.series[i]; i ? ctx.lineTo(X(i), Y(s.level)) : ctx.moveTo(X(i), Y(s.level)); }
+    ctx.stroke();
+    D.text("water in the tank", gx + 8, gy0 + 12, { size: 11, color: C.navy });
+    if (R.dry) D.text(`red = tank empty (${R.dry} days)`, gx + 8, gy0 + 28, { size: 11, color: C.red });
+    if (anim) { D.line(X(upto), gy0, X(upto), gy, { color: C.ink2, width: 1, dash: [2, 3], single: true }); D.text(dayLabel(upto), X(upto), gy0 - 4, { size: 10, mono: true, align: "center", color: C.ink2 }); }
+
+    // ---- the house, gutter and tank
+    const tx = W - tankW - 26, ty = gy0 + 70, th = Math.max(80, gh - 80);
+    const fill = D.clamp(cur.level / R.cap, 0, 1);
+    // roof + gutter + downpipe
+    D.line(tx - 10, ty - 50, tx + tankW * 0.55, ty - 72, { width: 2, seed: 3 });
+    D.line(tx + tankW * 0.55, ty - 72, tx + tankW + 10, ty - 50, { width: 2, seed: 4 });
+    D.line(tx - 14, ty - 48, tx + 8, ty - 48, { color: C.ink2, seed: 5 });
+    D.line(tx - 4, ty - 48, tx - 4, ty + 6, { color: C.ink2, seed: 6 });
+    D.line(tx - 4, ty + 6, tx + 14, ty + 6, { color: C.ink2, seed: 7 });
+    // rain: falls while the current month is wet
+    const rainy = R.cl.mm[cur.month] > 40;
+    if (rainy) {
+      const r = D.rng(9);
+      for (let k = 0; k < 18; k++) {
+        const x = tx - 10 + r() * (tankW + 20), y0 = ty - 130 + ((now * 160 + r() * 80) % 70);
+        D.line(x, y0, x - 3, y0 + 9, { color: C.blue, width: 1.2, single: true, rough: 0.2 });
+      }
+    } else D.icon("sun", tx + tankW * 0.55, ty - 104, 26, { color: C.amber });
+    // tank
+    const ix = tx + 10, iw = tankW - 20;
+    const wh = (th - 6) * fill;
+    ctx.fillStyle = fill < 0.02 ? C.red : C.blue; ctx.globalAlpha = 0.25; ctx.fillRect(ix + 3, ty + th - 3 - wh, iw - 6, wh); ctx.globalAlpha = 1;
+    if (wh > 2) D.line(ix + 3, ty + th - 3 - wh, ix + iw - 3, ty + th - 3 - wh, { color: C.blue, width: 1.4, single: true, rough: 0.6, seed: (now * 3) | 0 });
+    D.rect(ix, ty, iw, th, { seed: 11 });
+    for (let k = 1; k < 4; k++) D.line(ix, ty + (th * k) / 4, ix + 6, ty + (th * k) / 4, { width: 1, single: true });
+    D.text(`${L(cur.level)} L`, ix + iw / 2, ty + th / 2, { size: 15, mono: true, align: "center" });
+    D.text(`${Math.round(fill * 100)}%`, ix + iw / 2, ty + th / 2 + 18, { size: 11, mono: true, align: "center", color: C.ink2 });
+    D.icon("faucet-drip", ix + iw + 12, ty + th - 10, 18, { color: C.ink2 });
+    D.text(anim ? dayLabel(upto) : "end of year", ix + iw / 2, ty + th + 18, { size: 11, mono: true, align: "center", color: C.ink2 });
+
+    if (anim && anim.done) {
+      const ok = R.dry <= +p.allowDryDays;
+      D.stamp(ok ? (R.dry ? `DRY ${R.dry} DAYS (OK)` : "NEVER RAN DRY") : `DRY FOR ${R.dry} DAYS`, gx + gw * 0.55, gy0 + gh * 0.4, ok ? C.green : C.red);
+    }
+    if (!anim) D.text("(projection — press RUN TEST to watch the year go by)", 18, H - 12, { size: 11, color: C.ink3 });
+  },
+});
+
+function finish(p) {
+  const ok = R.dry <= +p.allowDryDays;
+  const desc = `${R.cl.name} climate, ${p.roofM2} m² ${p.roof} roof, ${L(p.tankL)} L tank, ${p.people} people using ${p.usePerPerson} L each a day`;
+  const stats = R.dry
+    ? `the tank is empty on ${R.dry} days (first on ${dayLabel(R.firstDry)}), covering ${Math.round(R.metPct)}% of the year's water`
+    : `the tank never runs dry; lowest level ${L(R.low)} L`;
+  const why = R.collected < R.yearDemand
+    ? `the roof only catches ${L(R.collected)} L a year but the house needs ${L(R.yearDemand)} L`
+    : `the year has enough rain (${L(R.collected)} L) but the tank is too small to carry it through the dry months (${L(R.overflow)} L overflowed in the wet season)`;
+  Bench.result({
+    passed: ok,
+    summary: `${desc}: ${stats}.`,
+    failureReason: ok ? undefined : `dry for ${R.dry} days (allowed ${p.allowDryDays}): ${why}`,
+    score: ok ? Math.round(R.metPct) : undefined, scoreLabel: "% of days with water",
+    metrics: { dryDays: R.dry, demandMetPct: Math.round(R.metPct), collectedL: Math.round(R.collected), overflowL: Math.round(R.overflow), lowestL: Math.round(R.low) },
+  });
+}
+</script>
+</body>
+</html>

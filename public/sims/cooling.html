@@ -1,0 +1,205 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Room Cooling Bench — a lumped heat balance for one room, 5-minute steps, three days (the last one is shown).
+ * Heat in: walls and windows  U A (Tout - Tin); roof  U A (Tout + sun boost - Tin) ("sol-air" temperature);
+ * sun through windows  irradiance x area x SHGC; air leaks  0.33 W/m3K x air changes x volume;
+ * people 80 W each; appliances. Thermal mass ~120 kJ/K per m² of floor (air, block walls, furniture).
+ * The AC is a thermostat: it removes up to its capacity whenever the room is above the target.
+ * 1 HP of AC ~ 9,000 BTU/h ~ 2.6 kW of cooling. Electricity = cooling / 3 (COP 3).
+ */
+const AC_W = { "0": 0, "0.75": 2050, "1": 2640, "1.5": 3520, "2": 5280, "2.5": 6150 };
+const ROOF = {
+  zinc:      { name: "bare zinc roof, no ceiling", U: 6.0, boost: 28 },
+  ceiling:   { name: "zinc roof with ceiling board", U: 2.2, boost: 22 },
+  insulated: { name: "insulated ceiling", U: 0.5, boost: 22 },
+  slab:      { name: "concrete slab roof", U: 2.8, boost: 16 },
+  floor:     { name: "another floor above", U: 0, boost: 0 },
+};
+const STEP = 5 / 60; // hours
+
+function weather(p, h) {
+  const tmax = +p.outsideMaxC;
+  const tout = tmax - 4.5 * (1 - Math.cos((2 * Math.PI * (h - 15)) / 24));
+  const hd = ((h % 24) + 24) % 24;
+  const sun = hd > 6 && hd < 18 ? Math.sin((Math.PI * (hd - 6)) / 12) : 0;
+  return { tout, sun };
+}
+
+function simulate(p) {
+  const A = +p.roomM2, side = Math.sqrt(A), vol = A * 3;
+  const win = Math.min(+p.windowM2, side * 3 * 2 * 0.6);
+  const wall = side * 3 * 2 - win;
+  const roof = ROOF[p.roof] || ROOF.ceiling;
+  const shgc = p.shade ? 0.3 : 0.7;
+  const acCap = AC_W[p.acHp] ?? 0;
+  const C = A * 120000; // J/K
+  const internal = +p.people * 80 + +p.appliancesW;
+  const target = +p.targetC;
+  let tin = weather(p, 0).tout, peakLoad = 0;
+  const day = [];
+  let kwh = 0, acHours = 0;
+  for (let h = 0; h < 72; h += STEP) {
+    const { tout, sun } = weather(p, h);
+    const ach = acCap > 0 ? 0.5 : 5; // windows shut with AC, open with only a fan
+    const heatIn = (T) =>
+      2.8 * wall * (tout - T) + 5.8 * win * (tout - T) +
+      roof.U * A * (tout + roof.boost * sun - T) +
+      350 * sun * win * shgc +
+      0.33 * ach * vol * (tout - T) + internal;
+    const gains = heatIn(tin);
+    let ac = 0;
+    if (acCap > 0 && tin > target - 0.3) {
+      const need = gains + ((tin - target) * C) / (STEP * 3600);
+      ac = Math.max(0, Math.min(acCap, need));
+    }
+    tin += ((gains - ac) * STEP * 3600) / C;
+    if (h >= 48) {
+      peakLoad = Math.max(peakLoad, heatIn(target)); // heat flowing in while the room is held at the target
+      kwh += (ac / 3) * STEP / 1000;
+      if (ac > 0) acHours += (ac / acCap) * STEP;
+      day.push({ h: h - 48, tin, tout, ac, sun });
+    }
+  }
+  const peak = Math.max(...day.map((d) => d.tin));
+  const hot = day.filter((d) => d.tin > target + 1).length * STEP;
+  const peakAt = day.find((d) => d.tin === peak).h;
+  return { day, peak, peakAt, hot, kwh, acHours, acCap, peakLoad, roof, target, ok: peak <= target + 1, tmax: +p.outsideMaxC };
+}
+
+const hhmm = (h) => `${String(Math.floor(h) % 24).padStart(2, "0")}:${String(Math.round((h % 1) * 60) % 60).padStart(2, "0")}`;
+const hpLabel = (v) => (v === "0" ? "no AC (fan only)" : `${v} HP AC`);
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  Bench.metrics({
+    stressRatio: Math.min(1.8, Math.max(0.1, (R.peak - (R.target - 6)) / 7)),
+    label: `${R.peak <= R.target + 0.3 ? `holds ${R.target}°C all day` : `peaks at ${R.peak.toFixed(1)}°C (${hhmm(R.peakAt)})`} · ${R.hot.toFixed(1)} h above ${R.target + 1}°C${R.acCap ? ` · AC ${R.kwh.toFixed(1)} kWh/day` : ""}`,
+    values: { peakC: +R.peak.toFixed(1), hoursTooHot: +R.hot.toFixed(1), acKwhPerDay: +R.kwh.toFixed(1), peakHeatW: Math.round(R.peakLoad) },
+  });
+}
+
+Bench.init({
+  params: { roomM2: 16, acHp: "1", roof: "ceiling", windowM2: 2, shade: false, people: 2, appliancesW: 200, outsideMaxC: 34, targetC: 26 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, dur: 7, done: false, p: { ...p } }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+    const prog = anim ? Math.min(1, (now - anim.t0) / anim.dur) : 1;
+    if (anim && !anim.done && prog >= 1) { anim.done = true; finish(anim.p); }
+    const idx = anim ? Math.min(R.day.length - 1, Math.floor(prog * (R.day.length - 1))) : R.day.findIndex((d) => d.h >= 15);
+    const cur = R.day[Math.max(0, idx)];
+
+    D.text(`${p.roomM2} m² room, ${R.roof.name}, ${p.windowM2} m² of window${p.shade ? " (shaded)" : ""}, ${hpLabel(p.acHp)}`, 18, 28, { size: 14 });
+    D.text(`outside up to ${p.outsideMaxC}°C · ${p.people} people + ${p.appliancesW} W of appliances · aim ${p.targetC}°C`, 18, 48, { size: 12, mono: true, color: C.ink2 });
+
+    // ---- the room
+    const rw = Math.min(260, W * 0.38), rx = 30, ry = 120, rh = Math.max(110, H - ry - 70);
+    // sun on its arc
+    if (cur.sun > 0) {
+      const a = Math.PI * (1 - (cur.h - 6) / 12);
+      D.icon("sun", rx + rw / 2 + Math.cos(a) * rw * 0.55, ry - 20 - Math.sin(a) * 42, 22, { color: C.amber });
+    } else D.icon("moon", rx + rw - 20, ry - 46, 18, { color: C.ink3 });
+    // roof
+    if (p.roof === "slab") { D.rect(rx - 8, ry - 14, rw + 16, 14, { hatch: true, seed: 2 }); }
+    else if (p.roof === "floor") { D.rect(rx - 8, ry - 14, rw + 16, 14, { hatch: true, seed: 2 }); D.text("floor above", rx + rw / 2, ry - 20, { size: 10, align: "center", color: C.ink3 }); }
+    else {
+      D.line(rx - 14, ry, rx + rw / 2, ry - 40, { width: 2, seed: 3 }); D.line(rx + rw / 2, ry - 40, rx + rw + 14, ry, { width: 2, seed: 4 });
+      if (p.roof !== "zinc") D.line(rx, ry + 2, rx + rw, ry + 2, { color: C.ink2, seed: 5 });
+      if (p.roof === "insulated") D.rect(rx + 4, ry - 10, rw - 8, 10, { hatch: true, hatchColor: C.amber, color: C.amber, seed: 6 });
+      if (cur.sun > 0.3 && p.roof === "zinc") for (let k = 0; k < 5; k++) D.line(rx + 30 + k * (rw - 60) / 4, ry + 8, rx + 26 + k * (rw - 60) / 4, ry + 20, { color: C.red, width: 1.2, single: true, seed: 70 + k });
+    }
+    // walls
+    const hot = cur.tin > R.target + 1;
+    ctx.fillStyle = hot ? C.red : C.blue; ctx.globalAlpha = 0.04 + D.clamp((cur.tin - 20) / 18, 0, 1) * 0.16; ctx.fillRect(rx, ry, rw, rh); ctx.globalAlpha = 1;
+    D.line(rx, ry, rx, ry + rh, { width: 2.2, seed: 7 }); D.line(rx + rw, ry, rx + rw, ry + rh, { width: 2.2, seed: 8 });
+    D.ground(rx - 30, rx + rw + 30, ry + rh);
+    // window
+    if (+p.windowM2 > 0) {
+      const wh = Math.min(rh * 0.5, 20 + +p.windowM2 * 6);
+      D.rect(rx + rw - 3, ry + 26, 6, wh, { fill: C.paper, seed: 9 });
+      if (p.shade) D.line(rx + rw - 8, ry + 22, rx + rw - 8, ry + 26 + wh, { color: C.ink2, width: 3, seed: 10 });
+      if (cur.sun > 0.2) for (let k = 0; k < 3; k++) D.line(rx + rw + 26, ry + 16 + k * 14, rx + rw + 6, ry + 30 + k * 14, { color: C.amber, width: 1.2, single: true, alpha: p.shade ? 0.4 : 1, seed: 20 + k });
+    }
+    // AC unit
+    if (R.acCap > 0) {
+      D.rect(rx + 12, ry + 18, 70, 22, { fill: C.paper, seed: 11 });
+      D.text(`${p.acHp} HP`, rx + 47, ry + 33, { size: 10, mono: true, align: "center" });
+      if (cur.ac > 0) for (let k = 0; k < 4; k++) {
+        const ph = (now * 0.9 + k / 4) % 1;
+        D.line(rx + 20 + k * 16, ry + 44 + ph * 26, rx + 24 + k * 16, ry + 52 + ph * 26, { color: C.blue, width: 1.4, single: true, alpha: 1 - ph, seed: 30 + k });
+      }
+    } else {
+      D.icon("fan", rx + 40, ry + 34, 22, { color: C.ink2, rotate: anim ? now * 8 : 0 });
+    }
+    // people
+    for (let k = 0; k < Math.min(6, +p.people); k++) D.person(rx + 40 + k * Math.max(22, (rw - 70) / 6), ry + rh, Math.min(46, rh * 0.4), { pose: hot ? "stand" : "sit", t: now, facing: k % 2 ? -1 : 1, seed: 40 + k });
+    // thermometer
+    const tx = rx + rw + 36, ty = ry + 50, tl = rh - 70;
+    D.rect(tx - 5, ty, 10, tl, { seed: 12 });
+    D.circle(tx, ty + tl + 8, 9, { fill: hot ? C.red : C.blue, color: hot ? C.red : C.blue, seed: 13 });
+    const tf = D.clamp((cur.tin - 15) / 30, 0, 1);
+    ctx.fillStyle = hot ? C.red : C.blue; ctx.fillRect(tx - 2, ty + tl * (1 - tf), 4, tl * tf);
+    D.text(`${cur.tin.toFixed(1)}°C`, tx + 12, ty + tl * (1 - tf) + 4, { size: 13, mono: true, color: hot ? C.red : C.ink });
+    D.text(hhmm(cur.h), rx + rw / 2, ry + rh + 22, { size: 12, mono: true, align: "center", color: C.ink2 });
+
+    // ---- 24 h chart
+    const gx = tx + 90, gw = Math.max(180, W - gx - 24), gy0 = 82, gh = Math.max(110, H - 160), gy = gy0 + gh;
+    const tMin = Math.min(R.target - 3, R.tmax - 10), tMax = Math.max(R.peak, R.tmax) + 2;
+    const X = (h) => gx + (h / 24) * gw, Y = (t) => gy - ((t - tMin) / (tMax - tMin)) * gh;
+    D.line(gx, gy, gx + gw, gy, { width: 1.3 }); D.line(gx, gy0, gx, gy, { width: 1.3 });
+    for (let h = 0; h <= 24; h += 6) D.text(hhmm(h), X(h), gy + 14, { size: 10, mono: true, align: "center", color: C.ink3 });
+    for (let t = Math.ceil(tMin / 5) * 5; t <= tMax; t += 5) D.text(`${t}°`, gx - 5, Y(t) + 4, { size: 10, mono: true, align: "right", color: C.ink3 });
+    D.line(gx, Y(R.target), gx + gw, Y(R.target), { color: C.green, dash: [6, 4], width: 1.2, single: true });
+    D.text(`aim ${R.target}°C`, gx + gw - 4, Y(R.target) + 13, { size: 10, align: "right", color: C.green });
+    const last = anim ? idx : R.day.length - 1;
+    const plot = (key, col, w) => { ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath(); for (let i = 0; i <= last; i++) { const d = R.day[i]; i ? ctx.lineTo(X(d.h), Y(d[key])) : ctx.moveTo(X(d.h), Y(d[key])); } ctx.stroke(); };
+    plot("tout", C.amber, 1.6);
+    plot("tin", R.ok ? C.navy : C.red, 2.4);
+    // AC running strip
+    if (R.acCap > 0) for (let i = 0; i <= last; i++) { const d = R.day[i]; if (d.ac > 0) { ctx.fillStyle = C.blue; ctx.globalAlpha = 0.15 + 0.45 * (d.ac / R.acCap); ctx.fillRect(X(d.h), gy - 8, gw / R.day.length + 0.5, 8); } }
+    ctx.globalAlpha = 1;
+    D.text("outside", gx + 8, gy0 + 12, { size: 11, color: C.amber });
+    D.text("inside", gx + 70, gy0 + 12, { size: 11, color: R.ok ? C.navy : C.red });
+    if (R.acCap > 0) D.text("AC working", gx + 128, gy0 + 12, { size: 11, color: C.blue });
+    D.text(`heat coming in at the hottest time: ${Math.round(R.peakLoad).toLocaleString()} W${R.acCap ? ` · AC removes up to ${R.acCap.toLocaleString()} W` : ""}`, gx, gy + 32, { size: 11, mono: true, color: R.peakLoad > R.acCap ? C.red : C.ink2 });
+
+    if (anim && anim.done) D.stamp(R.ok ? `STAYS ≤ ${R.target + 1}°C` : `HITS ${R.peak.toFixed(0)}°C`, gx + gw / 2, gy0 + gh * 0.35, R.ok ? C.green : C.red);
+    if (!anim) D.text("(projection — press RUN TEST to play a hot day, midnight to midnight)", 18, H - 12, { size: 11, color: C.ink3 });
+  },
+});
+
+function finish(p) {
+  const desc = `${p.roomM2} m² room, ${R.roof.name}, ${p.windowM2} m² window${p.shade ? " shaded" : ""}, ${p.people} people, ${p.appliancesW} W appliances, ${hpLabel(p.acHp)}, outside up to ${p.outsideMaxC}°C`;
+  const stats = `${R.peak <= R.target + 0.3 ? `inside holds ${R.target}°C all day` : `inside peaks at ${R.peak.toFixed(1)}°C around ${hhmm(R.peakAt)}`}, ${R.hot.toFixed(1)} h above ${R.target + 1}°C${R.acCap ? `, AC uses ${R.kwh.toFixed(1)} kWh a day` : ""}`;
+  const why = R.acCap === 0
+    ? `with no AC the room can't get below the outside temperature plus the heat from the roof, sun and people`
+    : R.peakLoad > R.acCap
+      ? `at the hottest time ${Math.round(R.peakLoad).toLocaleString()} W of heat comes in but the ${p.acHp} HP AC only removes ${R.acCap.toLocaleString()} W`
+      : `the AC keeps up only after the room has heated up`;
+  Bench.result({
+    passed: R.ok,
+    summary: `${desc}: ${stats}.`,
+    failureReason: R.ok ? undefined : `too hot: ${why}`,
+    score: R.ok ? +(24 - R.hot).toFixed(1) : undefined, scoreLabel: "comfortable hours a day",
+    metrics: { peakC: +R.peak.toFixed(1), hoursTooHot: +R.hot.toFixed(1), acKwhPerDay: +R.kwh.toFixed(1), peakHeatW: Math.round(R.peakLoad) },
+  });
+}
+</script>
+</body>
+</html>

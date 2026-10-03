@@ -1,0 +1,186 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Pulley, Lever & Ramp Bench — simple machines trade distance for force.
+ * Block and tackle: effort = load / (rope segments x efficiency^pulleys); you pull rope = lift x segments.
+ * Lever (fulcrum in between): effort = load x (load arm / effort arm).
+ * Ramp: effort = load x (sin(angle) + friction x cos(angle)); friction: trolley 0.03, rollers 0.08, sliding 0.4.
+ * Forces are in kilograms-force (what a bathroom scale would read). Passes when effort <= your strength.
+ */
+const EFF = { good: 0.96, rusty: 0.85 };
+const MU = { trolley: 0.03, rollers: 0.08, slide: 0.4 };
+
+function simulate(p) {
+  const W = +p.loadKg, mode = p.mode;
+  let effort, travel, note = "", ma;
+  if (mode === "lever") {
+    const L = +p.leverM, a = Math.min(+p.fulcrumCm / 100, L - 0.05), b = L - a;
+    effort = (W * a) / b; ma = b / a; travel = (+p.liftM * b) / a;
+    note = `load arm ${(a * 100).toFixed(0)} cm, push arm ${(b * 100).toFixed(0)} cm`;
+    return { mode, W, effort, ma, travel, note, a, b, L, ok: effort <= +p.strengthKg };
+  }
+  if (mode === "ramp") {
+    const len = Math.max(+p.rampM, +p.liftM + 0.01), s = +p.liftM / len, c = Math.sqrt(1 - s * s);
+    const mu = MU[p.rampSurface] ?? 0.1;
+    effort = W * (s + mu * c); ma = W / effort; travel = len;
+    const ratio = len / +p.liftM; // 1 in N
+    note = `slope 1 in ${(Math.sqrt(len * len - +p.liftM * +p.liftM) / +p.liftM).toFixed(1)} (${((Math.asin(s) * 180) / Math.PI).toFixed(0)}°)`;
+    return { mode, W, effort, ma, travel, note, len, angle: Math.asin(s), mu, ratio, ok: effort <= +p.strengthKg };
+  }
+  const n = Math.round(+p.ropes), eta = Math.pow(EFF[p.pulleyType] ?? 0.9, n);
+  effort = W / (n * eta); ma = n * eta; travel = +p.liftM * n;
+  note = `${n} rope${n > 1 ? "s" : ""} hold the load, ${Math.round(eta * 100)}% efficient`;
+  return { mode: "pulley", W, effort, ma, travel, note, n, eta, ok: effort <= +p.strengthKg };
+}
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  Bench.metrics({
+    stressRatio: R.effort / Math.max(1, +p.strengthKg),
+    label: `you need ${R.effort.toFixed(1)} kg of force (you have ${p.strengthKg}) · ${R.mode === "lever" ? "push" : "pull"} ${R.travel.toFixed(1)} m`,
+    values: { effortKg: +R.effort.toFixed(1), mechanicalAdvantage: +R.ma.toFixed(2), travelM: +R.travel.toFixed(1) },
+  });
+}
+
+function arrow(D, x1, y1, x2, y2, col, label) {
+  D.line(x1, y1, x2, y2, { color: col, width: 2.4, single: true });
+  const a = Math.atan2(y2 - y1, x2 - x1);
+  D.line(x2, y2, x2 - Math.cos(a - 0.45) * 10, y2 - Math.sin(a - 0.45) * 10, { color: col, width: 2.4, single: true });
+  D.line(x2, y2, x2 - Math.cos(a + 0.45) * 10, y2 - Math.sin(a + 0.45) * 10, { color: col, width: 2.4, single: true });
+  if (label) D.text(label, x1 + 8, (y1 + y2) / 2, { size: 12, mono: true, color: col });
+}
+
+Bench.init({
+  params: { mode: "pulley", loadKg: 80, strengthKg: 25, liftM: 2, ropes: 2, pulleyType: "good", leverM: 2, fulcrumCm: 40, rampM: 6, rampSurface: "trolley" },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, dur: 4.5, done: false, p: { ...p } }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+    const t = anim ? now - anim.t0 : 0;
+    if (anim && !anim.done && t >= anim.dur) { anim.done = true; finish(anim.p); }
+    const move = anim ? (R.ok ? D.ease(D.clamp((t - 0.6) / 3, 0, 1)) : 0) : 0;
+    const strain = anim && !R.ok && t > 0.4 ? Math.sin(now * 40) * 1.5 : 0;
+    const effCol = R.ok ? C.green : C.red;
+
+    const title = { pulley: "Block and tackle", lever: "Lever", ramp: "Ramp" }[R.mode];
+    D.text(`${title}: lift ${p.loadKg} kg ${p.liftM} m · ${R.note}`, 18, 28, { size: 14 });
+    D.text(`effort ${R.effort.toFixed(1)} kg vs your ${p.strengthKg} kg · advantage ×${R.ma.toFixed(2)} · ${R.mode === "lever" ? "push" : "pull"} ${R.travel.toFixed(1)} m`, 18, 48, { size: 12, mono: true, color: C.ink2 });
+
+    const gy = H - 50;
+    D.ground(30, W - 30, gy);
+
+    if (R.mode === "pulley") {
+      const cx = W * 0.42, beamY = 78, n = R.n;
+      D.rect(cx - 120, beamY - 12, 240, 12, { hatch: true, seed: 1 });
+      const liftPx = Math.min(gy - beamY - 150, 40 + +p.liftM * 22);
+      const boxS = 34 + Math.min(40, +p.loadKg / 6);
+      const boxTop = gy - boxS - liftPx * move + strain * 0.3;
+      const lowY = boxTop - 26;
+      const spread = Math.max(14, Math.min(26, 120 / n));
+      const xs = Array.from({ length: n }, (_, i) => cx - ((n - 1) * spread) / 2 + i * spread);
+      // top block and bottom (moving) block
+      const topPulleys = Math.ceil(n / 2), lowPulleys = Math.floor(n / 2);
+      D.rect(cx - (n * spread) / 2 - 8, beamY + 4, n * spread + 16, 22, { fill: C.paper, seed: 2 });
+      for (let k = 0; k < topPulleys; k++) D.circle(cx - ((topPulleys - 1) * 22) / 2 + k * 22, beamY + 15, 9, { seed: 3 + k });
+      if (n > 1) {
+        D.rect(cx - (n * spread) / 2 - 8, lowY - 10, n * spread + 16, 20, { fill: C.paper, seed: 12 });
+        for (let k = 0; k < lowPulleys; k++) D.circle(cx - ((lowPulleys - 1) * 22) / 2 + k * 22, lowY, 8, { seed: 13 + k });
+      }
+      const ropeCol = R.ok ? C.ink : C.red;
+      for (const x of xs) D.line(x, beamY + 26, x, n > 1 ? lowY - 10 : boxTop, { color: ropeCol, width: 1.6, single: true, rough: 0.2 });
+      D.line(cx, n > 1 ? lowY + 10 : boxTop, cx, boxTop, { width: 1.6 });
+      // free end runs from the top block over to the person
+      const px = cx + 170, handY = gy - 70 + (anim && R.ok ? Math.sin(now * 6) * 6 : 0);
+      D.line(xs[xs.length - 1] + 8, beamY + 15, px - 8, handY, { color: ropeCol, width: 1.6, single: true, rough: 0.2 });
+      D.person(px + strain, gy, 90, { pose: anim ? "carry" : "stand", t: now, facing: -1, seed: 31 });
+      D.rect(cx - boxS / 2, boxTop, boxS, boxS, { fill: C.paper, hatch: true, seed: 21 });
+      D.text(`${p.loadKg} kg`, cx, boxTop + boxS / 2 + 5, { size: 13, mono: true, align: "center" });
+      arrow(D, px + 40, gy - 130, px + 40, gy - 80, effCol, `${R.effort.toFixed(1)} kg`);
+      D.text(`${n} rope${n > 1 ? "s" : ""} share the load`, cx - 130, lowY - 30, { size: 11, color: C.ink2 });
+      D.dim(cx - 120, gy, cx - 120, gy - liftPx, `${p.liftM} m`, { color: C.ink3 });
+    } else if (R.mode === "lever") {
+      const fx = W * 0.42, fy = gy, plen = Math.min(W - 160, 140 + R.L * 110);
+      const aPx = (R.a / R.L) * plen, bPx = plen - aPx;
+      const maxTilt = Math.min(0.32, Math.atan2(36, bPx));
+      const tilt = maxTilt - 2 * maxTilt * move + strain * 0.004; // starts load-side down, ends load-side up
+      const pivotY = fy - 46;
+      D.line(fx - 22, fy, fx, pivotY, { width: 2, seed: 4 }); D.line(fx, pivotY, fx + 22, fy, { width: 2, seed: 5 });
+      ctx.save(); ctx.translate(fx, pivotY); ctx.rotate(-tilt);
+      D.rect(-aPx, -8, plen, 8, { fill: C.paper, color: R.ok ? C.ink : C.red, seed: 6 });
+      const boxS = 30 + Math.min(40, +p.loadKg / 6);
+      D.rect(-aPx + 4, -8 - boxS, boxS, boxS, { fill: C.paper, hatch: true, seed: 7 });
+      D.text(`${p.loadKg} kg`, -aPx + 4 + boxS / 2, -8 - boxS / 2 + 5, { size: 12, mono: true, align: "center" });
+      ctx.restore();
+      const ex = fx + Math.cos(tilt) * bPx, ey = pivotY + Math.sin(tilt) * bPx;
+      D.person(ex + 10 + strain, gy, 88, { pose: "carry", facing: -1, seed: 32 });
+      arrow(D, ex - 6, ey - 70, ex - 6, ey - 16, effCol, `${R.effort.toFixed(1)} kg`);
+      D.dim(fx - aPx, pivotY + 26, fx, pivotY + 26, `${Math.round(R.a * 100)} cm`, { color: C.ink3 });
+      D.dim(fx, pivotY + 26, fx + bPx, pivotY + 26, `${Math.round(R.b * 100)} cm`, { color: C.ink3 });
+    } else {
+      const x0 = 70, x1 = Math.min(W - 80, x0 + 120 + R.len * 40), rise = Math.min(gy - 120, (x1 - x0) * Math.tan(R.angle));
+      D.line(x0, gy, x1, gy - rise, { width: 2.2, seed: 8 }); D.line(x1, gy - rise, x1, gy, { width: 1.6, seed: 9 });
+      D.line(x1, gy - rise, x1 + 60, gy - rise, { width: 2, seed: 10 });
+      ctx.fillStyle = C.ink; ctx.globalAlpha = 0.05; ctx.beginPath(); ctx.moveTo(x0, gy); ctx.lineTo(x1, gy - rise); ctx.lineTo(x1, gy); ctx.fill(); ctx.globalAlpha = 1;
+      const ang = Math.atan2(rise, x1 - x0), along = Math.hypot(x1 - x0, rise);
+      const d = 30 + (along - 60) * move;
+      const bx = x0 + Math.cos(ang) * d, by = gy - Math.sin(ang) * d;
+      const boxS = 30 + Math.min(30, +p.loadKg / 8);
+      ctx.save(); ctx.translate(bx, by); ctx.rotate(-ang);
+      D.rect(-boxS / 2, -boxS, boxS, boxS, { fill: C.paper, hatch: true, seed: 11 });
+      if (p.rampSurface === "trolley") { D.circle(-boxS / 3, 4, 4, { seed: 12 }); D.circle(boxS / 3, 4, 4, { seed: 13 }); }
+      if (p.rampSurface === "rollers") for (let k = -1; k <= 1; k++) D.circle(k * boxS / 3, 3, 3, { seed: 14 + k });
+      D.text(`${p.loadKg} kg`, 0, -boxS / 2 + 5, { size: 12, mono: true, align: "center" });
+      ctx.restore();
+      const px = bx - Math.cos(ang) * (boxS / 2 + 16), py = by + Math.sin(ang) * (boxS / 2 + 16);
+      D.person(px + strain, py, 80, { pose: anim && R.ok ? "walk" : "carry", t: now, seed: 33 });
+      arrow(D, px - 60, py - 40, px - 60 + Math.cos(ang) * 50, py - 40 - Math.sin(ang) * 50, effCol, `${R.effort.toFixed(1)} kg`);
+      D.dim(x1 + 30, gy, x1 + 30, gy - rise, `${p.liftM} m`, { color: C.ink3 });
+      D.text(`${R.len.toFixed(1)} m of ramp · ${R.note}`, (x0 + x1) / 2 - 40, gy - rise / 2 - 18, { size: 11, color: C.ink2, rotate: -ang });
+      if (+p.liftM / Math.sqrt(R.len * R.len - +p.liftM * +p.liftM) > 1 / 12) D.text("steeper than 1 in 12: too steep for a wheelchair ramp", 18, 70, { size: 11, color: C.amber });
+    }
+
+    // strength meter
+    const mx = W - 170, my = 80;
+    D.text("your strength", mx, my, { size: 11, color: C.ink2 });
+    D.rect(mx, my + 6, 140, 12, { seed: 90 });
+    const f = D.clamp(R.effort / Math.max(1, +p.strengthKg), 0, 1.4) / 1.4;
+    ctx.fillStyle = effCol; ctx.globalAlpha = 0.45; ctx.fillRect(mx + 1, my + 7, 138 * f, 10); ctx.globalAlpha = 1;
+    D.line(mx + 140 / 1.4, my + 2, mx + 140 / 1.4, my + 22, { color: C.ink, width: 1.4, single: true });
+    D.text(`${Math.round((R.effort / Math.max(1, +p.strengthKg)) * 100)}% of it`, mx, my + 36, { size: 11, mono: true, color: effCol });
+
+    if (anim && anim.done) D.stamp(R.ok ? "LIFTED" : "WON'T BUDGE", W / 2, 120, R.ok ? C.green : C.red);
+    if (!anim) D.text("(projection — press RUN TEST to try the lift)", 18, H - 12, { size: 11, color: C.ink3 });
+  },
+});
+
+function finish(p) {
+  const desc =
+    R.mode === "pulley" ? `block and tackle with ${R.n} rope segments (${p.pulleyType === "good" ? "smooth" : "rusty"} pulleys)`
+    : R.mode === "lever" ? `${p.leverM} m lever with the load ${p.fulcrumCm} cm from the fulcrum`
+    : `${R.len.toFixed(1)} m ramp (${R.note}), load on ${p.rampSurface}`;
+  Bench.result({
+    passed: R.ok,
+    summary: `Lifting ${p.loadKg} kg by ${p.liftM} m with a ${desc}: needs ${R.effort.toFixed(1)} kg of force (mechanical advantage ×${R.ma.toFixed(2)}) and ${R.mode === "lever" ? "pushing" : "pulling"} through ${R.travel.toFixed(1)} m.`,
+    failureReason: R.ok ? undefined : `${R.effort.toFixed(1)} kg of force is more than the ${p.strengthKg} kg you can manage`,
+    score: R.ok ? +(+p.strengthKg - R.effort).toFixed(1) : undefined, scoreLabel: "kg of strength to spare",
+    metrics: { effortKg: +R.effort.toFixed(1), mechanicalAdvantage: +R.ma.toFixed(2), travelM: +R.travel.toFixed(1) },
+  });
+}
+</script>
+</body>
+</html>

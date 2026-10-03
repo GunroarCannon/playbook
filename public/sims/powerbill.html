@@ -1,0 +1,133 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Electricity Bill Bench — a 30-day month on a prepaid meter.
+ * Energy (kWh) = power (W) x hours a day / 1000 x 30. Nothing runs when the grid is off, so each appliance's
+ * hours are capped at the hours of supply. The fridge runs all day: ~1.2 kWh per 24 h of supply.
+ * Bill = kWh x tariff x 1.075 (7.5% VAT). Passes when the month's bill fits the budget.
+ */
+const APPS = [
+  { key: "fridge", name: "Fridge", icon: "snowflake", w: 50, hours: (p) => (p.fridge ? 24 : 0) },
+  { key: "ac", name: "AC (1.5 HP)", icon: "temperature-arrow-down", w: 900, hours: (p) => +p.acHours },
+  { key: "fans", name: "Fans", icon: "fan", w: 70, hours: (p) => 10, count: (p) => +p.fans },
+  { key: "bulbs", name: "LED bulbs", icon: "lightbulb", w: 10, hours: (p) => 6, count: (p) => +p.bulbs },
+  { key: "tv", name: "TV + decoder", icon: "tv", w: 120, hours: (p) => +p.tvHours },
+  { key: "iron", name: "Pressing iron", icon: "shirt", w: 1200, hours: (p) => +p.ironHours },
+  { key: "heater", name: "Water heater", icon: "shower", w: 3000, hours: (p) => +p.heaterHours },
+  { key: "pump", name: "Water pump", icon: "faucet", w: 750, hours: (p) => +p.pumpHours },
+];
+const VAT = 1.075;
+
+function simulate(p) {
+  const supply = +p.supplyHours, tariff = +p.tariff;
+  const rows = APPS.map((a) => {
+    const n = a.count ? a.count(p) : 1;
+    const h = Math.min(a.hours(p), supply);
+    const kwhDay = (a.w * n * h) / 1000;
+    return { ...a, n, h, kwhDay, kwhMonth: kwhDay * 30, cost: kwhDay * 30 * tariff * VAT };
+  }).filter((r) => r.kwhDay > 0);
+  rows.sort((a, b) => b.cost - a.cost);
+  const kwhMonth = rows.reduce((s, r) => s + r.kwhMonth, 0);
+  const bill = kwhMonth * tariff * VAT;
+  return { rows, kwhMonth, kwhDay: kwhMonth / 30, bill, ok: bill <= +p.budget, top: rows[0] };
+}
+
+const money = (v) => Math.round(v).toLocaleString();
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  Bench.metrics({
+    stressRatio: Math.min(2, R.bill / Math.max(1, +p.budget)),
+    label: `${R.kwhDay.toFixed(1)} kWh a day · ${money(R.bill)} a month${R.top ? ` · biggest: ${R.top.name}` : ""}`,
+    values: { kwhPerMonth: Math.round(R.kwhMonth), billPerMonth: Math.round(R.bill), biggest: R.top ? R.top.name : "nothing" },
+  });
+}
+
+Bench.init({
+  params: { tariff: 209, supplyHours: 20, budget: 60000, fridge: true, acHours: 4, fans: 2, bulbs: 8, tvHours: 6, ironHours: 0.5, heaterHours: 0, pumpHours: 0.5 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, dur: 6, done: false, p: { ...p } }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+    const prog = anim ? Math.min(1, (now - anim.t0) / anim.dur) : 1;
+    if (anim && !anim.done && prog >= 1) { anim.done = true; finish(anim.p); }
+    const day = Math.max(1, Math.ceil(prog * 30));
+
+    D.text(`${p.supplyHours} h of power a day at ${money(+p.tariff)}/kWh (+7.5% VAT) · budget ${money(+p.budget)} a month`, 18, 28, { size: 14 });
+    D.text(`${R.kwhDay.toFixed(1)} kWh a day · ${Math.round(R.kwhMonth)} kWh a month · ${money(R.bill)} a month`, 18, 48, { size: 12, mono: true, color: C.ink2 });
+
+    // ---- where the money goes
+    const side = 190, gx = 160, gw = Math.max(160, W - gx - side - 60), gy0 = 80;
+    const rowH = Math.max(18, Math.min(34, (H - gy0 - 70) / Math.max(1, R.rows.length)));
+    const maxCost = Math.max(1, ...R.rows.map((r) => r.cost));
+    R.rows.forEach((r, i) => {
+      const y = gy0 + i * rowH;
+      D.icon(r.icon, 30, y + rowH / 2, Math.min(18, rowH - 4), { color: i === 0 ? C.red : C.ink2 });
+      D.text(r.n > 1 ? `${r.n} × ${r.name.toLowerCase()}` : r.name, 46, y + rowH / 2 + 4, { size: 12 });
+      const w = (r.cost / maxCost) * gw * prog;
+      ctx.fillStyle = i === 0 ? C.red : C.navy; ctx.globalAlpha = 0.3; ctx.fillRect(gx, y + 4, w, rowH - 8); ctx.globalAlpha = 1;
+      D.line(gx, y + 4, gx, y + rowH - 4, { width: 1, single: true });
+      D.text(`${money(r.cost * prog)}  (${r.h} h/day)`, gx + w + 6, y + rowH / 2 + 4, { size: 11, mono: true, color: C.ink2 });
+    });
+    if (!R.rows.length) D.text("everything is switched off", gx, gy0 + 20, { size: 13, color: C.ink3 });
+    if (R.top && R.rows.length > 1) D.text(`${R.top.name} is ${Math.round((100 * R.top.cost) / R.bill)}% of the bill`, gx, gy0 + R.rows.length * rowH + 16, { size: 12, color: C.red });
+
+    // ---- prepaid meter
+    const mx = W - side - 20, my = gy0, mw = side, mh = 170;
+    D.rect(mx, my, mw, mh, { fill: C.paper, seed: 41 });
+    D.text("PREPAID METER", mx + mw / 2, my + 18, { size: 10, mono: true, align: "center", color: C.ink3 });
+    D.rect(mx + 14, my + 28, mw - 28, 40, { fill: C.fill, seed: 42 });
+    const used = R.kwhMonth * prog, spent = R.bill * prog;
+    D.text(`${used.toFixed(1)} kWh`, mx + mw / 2, my + 56, { size: 18, mono: true, align: "center", color: spent > +p.budget ? C.red : C.ink });
+    D.text(`₦ ${money(spent)}`, mx + mw / 2, my + 90, { size: 15, mono: true, align: "center", color: spent > +p.budget ? C.red : C.ink2 });
+    // spinning disc / blinking LED (faster with more load)
+    const rate = R.kwhDay / 10;
+    const blink = anim && !anim.done ? Math.sin(now * (4 + rate * 20)) > 0.6 : false;
+    D.circle(mx + 26, my + 120, 6, { fill: blink ? C.red : C.paper, color: C.red, seed: 43 });
+    D.text("imp/kWh", mx + 38, my + 124, { size: 9, mono: true, color: C.ink3 });
+    // budget bar
+    const bx = mx + 14, by = my + 140, bw = mw - 28;
+    D.rect(bx, by, bw, 10, { seed: 44 });
+    const bf = D.clamp(spent / Math.max(1, +p.budget), 0, 1);
+    ctx.fillStyle = spent > +p.budget ? C.red : C.green; ctx.globalAlpha = 0.45; ctx.fillRect(bx + 1, by + 1, (bw - 2) * bf, 8); ctx.globalAlpha = 1;
+    D.text(`${Math.round((spent / Math.max(1, +p.budget)) * 100)}% of budget`, mx + mw / 2, by + 24, { size: 10, mono: true, align: "center", color: C.ink2 });
+    D.text(anim ? `day ${day} of 30` : "a 30-day month", mx + mw / 2, my + mh + 20, { size: 12, mono: true, align: "center", color: C.ink2 });
+    // grid supply strip (24 h)
+    const sy = my + mh + 36;
+    D.text("power each day", mx, sy, { size: 11, color: C.ink2 });
+    for (let h = 0; h < 24; h++) { ctx.fillStyle = h < +p.supplyHours ? C.green : C.ink3; ctx.globalAlpha = h < +p.supplyHours ? 0.5 : 0.2; ctx.fillRect(mx + (h * mw) / 24, sy + 6, mw / 24 - 1, 10); }
+    ctx.globalAlpha = 1;
+
+    if (anim && anim.done) D.stamp(R.ok ? "WITHIN BUDGET" : "OVER BUDGET", gx + gw / 2, Math.min(H - 70, gy0 + R.rows.length * rowH * 0.5 + 20), R.ok ? C.green : C.red);
+    if (!anim) D.text("(projection — press RUN TEST to run the month)", 18, H - 12, { size: 11, color: C.ink3 });
+  },
+});
+
+function finish(p) {
+  const parts = R.rows.slice(0, 3).map((r) => `${r.name} ${money(r.cost)}`).join(", ");
+  Bench.result({
+    passed: R.ok,
+    summary: `${p.supplyHours} h of supply a day at ${money(+p.tariff)}/kWh: ${Math.round(R.kwhMonth)} kWh a month, bill ${money(R.bill)} against a ${money(+p.budget)} budget. Biggest costs: ${parts || "none"}.`,
+    failureReason: R.ok ? undefined : `${money(R.bill - +p.budget)} over budget; ${R.top.name} alone costs ${money(R.top.cost)} a month (${R.top.h} h a day at ${R.top.w * R.top.n} W)`,
+    score: R.ok ? Math.round(+p.budget - R.bill) : undefined, scoreLabel: "left in the monthly budget",
+    metrics: { kwhPerMonth: Math.round(R.kwhMonth), billPerMonth: Math.round(R.bill), biggest: R.top ? R.top.name : "nothing" },
+  });
+}
+</script>
+</body>
+</html>

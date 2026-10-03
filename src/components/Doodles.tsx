@@ -293,10 +293,174 @@ export function MagicFlask({ size = 64, ...props }: P) {
   );
 }
 
+export function Shelf({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <path d="M8 6 V94" strokeWidth="2.2" />
+      <path d="M8 58 H92 V64 H8" />
+      <path d="M8 64 L30 82 M14 64 L8 70" />
+      <path d="M16 58 V30 H24 V58 M26 58 V24 H35 V58 M37 58 V34 H44 V58 M48 58 L58 30 L65 33 L55 58" />
+      <rect x="70" y="40" width="16" height="18" fill="url(#pb-hatch)" />
+      <path d="M50 70 Q60 74 70 70" strokeDasharray="2 3" opacity="0.6" />
+    </svg>
+  );
+}
+
+export function Pulley({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <path d="M20 6 H80" strokeWidth="2.2" />
+      <path d="M26 6 l-5 -4 M40 6 l-5 -4 M54 6 l-5 -4 M68 6 l-5 -4" opacity="0.6" />
+      <path d="M50 6 V20" />
+      <circle cx="50" cy="32" r="13" />
+      <circle cx="50" cy="32" r="3" fill="currentColor" />
+      <path d="M37 32 V94 M63 32 V60" />
+      <rect x="53" y="60" width="20" height="18" fill="url(#pb-hatch)" />
+      <path d="M37 80 l-4 6 M37 80 l4 6" opacity="0.7" />
+    </svg>
+  );
+}
+
+export function EggChute({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <path d="M14 34 Q50 -6 86 34 Q77 30 68 34 Q59 30 50 34 Q41 30 32 34 Q23 30 14 34 Z" />
+      <path d="M15 34 L44 66 M38 34 L47 64 M62 34 L53 64 M85 34 L56 66" opacity="0.8" />
+      <ellipse cx="50" cy="78" rx="10" ry="13" />
+      <path d="M41 78 L46 74 L50 80 L54 75 L59 78" />
+      <path d="M20 96 H80" strokeDasharray="3 4" opacity="0.6" />
+    </svg>
+  );
+}
+
+export function FuelGauge({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <path d="M10 70 Q30 40 50 54 T90 36" strokeDasharray="4 4" opacity="0.6" />
+      <path d="M14 58 A36 36 0 0 1 86 58" />
+      <path d="M50 58 L30 32" strokeWidth="2.4" />
+      <circle cx="50" cy="58" r="4" fill="currentColor" />
+      <text x="12" y="74" fontSize="11" fill="currentColor" stroke="none" fontFamily="var(--font-hand)">E</text>
+      <text x="80" y="74" fontSize="11" fill="currentColor" stroke="none" fontFamily="var(--font-hand)">F</text>
+      <path d="M38 88 H62 M42 82 H58 V94 H42 Z" />
+    </svg>
+  );
+}
+
+export function RainTank({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <path d="M8 30 L34 12 L60 30" />
+      <path d="M58 30 H72 V48" />
+      <rect x="62" y="48" width="30" height="42" rx="4" />
+      <path d="M64 72 Q77 68 90 72" opacity="0.8" />
+      <path d="M64 72 V88 H90 V72" fill="url(#pb-hatch)" stroke="none" />
+      <path d="M14 46 l-3 7 M26 40 l-3 7 M38 46 l-3 7 M20 60 l-3 7 M32 56 l-3 7" opacity="0.7" />
+    </svg>
+  );
+}
+
+export function Genset({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <rect x="12" y="34" width="70" height="40" rx="4" />
+      <path d="M8 26 H86 M8 26 V76 M86 26 V76" />
+      <path d="M20 44 H44 M20 52 H44 M20 60 H44" />
+      <circle cx="64" cy="52" r="9" />
+      <circle cx="24" cy="82" r="7" />
+      <path d="M82 40 H94 V30" />
+      <circle cx="94" cy="20" r="4" opacity="0.6" />
+      <circle cx="90" cy="10" r="5" opacity="0.4" />
+    </svg>
+  );
+}
+
+export function AcUnit({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <rect x="10" y="20" width="80" height="30" rx="8" />
+      <path d="M20 42 H80" />
+      <circle cx="80" cy="30" r="2" fill="currentColor" />
+      <path d="M26 58 Q22 66 28 74 M50 58 Q46 68 52 78 M74 58 Q70 66 76 74" />
+      <path d="M8 92 H20 M14 86 V98 M10 88 L18 96 M18 88 L10 96" opacity="0.7" />
+    </svg>
+  );
+}
+
+export function Meter({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <rect x="24" y="6" width="52" height="88" rx="6" />
+      <rect x="32" y="14" width="36" height="18" />
+      <path d="M36 23 H58" strokeWidth="2.2" />
+      {[0, 1, 2].flatMap((c) => [0, 1, 2].map((r) => <rect key={`${c}${r}`} x={33 + c * 12} y={40 + r * 12} width="9" height="8" />))}
+      <circle cx="36" cy="84" r="3" fill="currentColor" />
+      <path d="M84 30 L92 20 L88 34 L96 28" opacity="0.7" />
+    </svg>
+  );
+}
+
+export function Receipt({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <path d="M22 8 H78 V92 L71 86 L64 92 L57 86 L50 92 L43 86 L36 92 L29 86 L22 92 Z" />
+      <path d="M32 24 H68 M32 34 H60 M32 44 H66" opacity="0.8" />
+      <path d="M32 60 Q42 54 50 62 T68 58" />
+      <text x="36" y="80" fontSize="13" fill="currentColor" stroke="none" fontFamily="var(--font-hand)">% / mo</text>
+    </svg>
+  );
+}
+
+export function Stall({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <path d="M8 18 H92 V30 H8 Z" fill="url(#pb-hatch)" />
+      <path d="M8 30 Q15 38 22 30 Q29 38 36 30 Q43 38 50 30 Q57 38 64 30 Q71 38 78 30 Q85 38 92 30" />
+      <path d="M14 30 V92 M86 30 V92" />
+      <rect x="10" y="60" width="80" height="22" />
+      <circle cx="30" cy="54" r="5" />
+      <circle cx="42" cy="54" r="5" />
+      <circle cx="36" cy="46" r="5" />
+      <path d="M58 58 L66 44 L74 58" />
+    </svg>
+  );
+}
+
+export function Exit({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <rect x="54" y="10" width="34" height="80" />
+      <path d="M54 10 L72 18 V96 L54 90" fill="url(#pb-hatch)" />
+      <circle cx="26" cy="30" r="6" />
+      <path d="M26 36 L22 58 L34 76 M22 58 L12 74 M24 44 L38 50 M24 44 L12 50" />
+      <path d="M40 66 H50 M44 60 L50 66 L44 72" />
+    </svg>
+  );
+}
+
 export function BenchIcon({ simId, size = 28, ...props }: P & { simId: string }) {
   const Icon =
-    { truss: Crane, queue: Balance, solar: Bulb, projectile: Pendulum, outbreak: Virus, braking: Car, savings: CoinJar, rocket: Rocket }[simId] ??
-    (simId.startsWith("c-") ? MagicFlask : Flask);
+    {
+      truss: Crane,
+      queue: Balance,
+      solar: Bulb,
+      projectile: Pendulum,
+      outbreak: Virus,
+      braking: Car,
+      savings: CoinJar,
+      rocket: Rocket,
+      shelf: Shelf,
+      pulley: Pulley,
+      eggdrop: EggChute,
+      roadtrip: FuelGauge,
+      rainwater: RainTank,
+      generator: Genset,
+      cooling: AcUnit,
+      powerbill: Meter,
+      loan: Receipt,
+      business: Stall,
+      evacuation: Exit,
+    }[simId] ?? (simId.startsWith("c-") ? MagicFlask : Flask);
   return <Icon size={size} {...props} />;
 }
 

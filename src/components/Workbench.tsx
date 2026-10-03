@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { HostToSim, SimMetrics, SimResult, SimToHost } from "@/lib/protocol";
-import type { ParamValue, SimDef } from "@/lib/sims";
+import { defaultParams, type ParamValue, type SimDef, type SimPreset } from "@/lib/sims";
 import { Control, RunButton, StressGauge } from "./Controls";
+import Icon from "./Icon";
 
 type Props = {
   sim: SimDef;
@@ -12,6 +13,8 @@ type Props = {
   dials: Record<string, ParamValue>;
   onDial: (key: string, value: ParamValue) => void;
   onReset: () => void;
+  /** One-click scenario: sets every dial (unlisted ones go back to their defaults). */
+  onPreset: (preset: SimPreset) => void;
   flashKeys: string[];
   theme: "light" | "dark";
   runSignal: number;
@@ -22,7 +25,7 @@ type Props = {
   busyNote?: string | null;
 };
 
-export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKeys, theme, runSignal, onResult, onSimError, busyNote }: Props) {
+export default function Workbench({ sim, srcDoc, dials, onDial, onReset, onPreset, flashKeys, theme, runSignal, onResult, onSimError, busyNote }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false);
   const [metrics, setMetrics] = useState<SimMetrics | null>(null);
@@ -99,6 +102,12 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKe
     }
   }, [runSignal, ready]);
 
+  // the preset whose dials are all exactly what's set now (turning any dial un-picks it)
+  const active = sim.presets?.find((pr) => {
+    const want = { ...defaultParams(sim.params), ...pr.params };
+    return sim.params.every((p) => (dials[p.key] ?? p.default) === want[p.key]);
+  });
+
   const visible = sim.params.filter((p) => !p.showIf || dials[p.showIf.key] === p.showIf.equals);
   const dialsList = visible.filter((p) => p.control === "dial");
   const others = visible.filter((p) => p.control !== "dial");
@@ -142,6 +151,36 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKe
               reset to defaults
             </button>
           </div>
+          {!!sim.presets?.length && (
+            <div data-tour="presets" className="mb-2.5">
+              <div className="flex items-center gap-1.5 overflow-x-auto overscroll-x-contain -mx-1 px-1 pb-1" role="group" aria-label="Ready-made scenarios">
+                <span className="hand text-[13px] text-ink-3 shrink-0 mr-0.5">Try a scenario:</span>
+                {sim.presets.map((pr) => {
+                  const on = pr.id === active?.id;
+                  return (
+                    <button
+                      key={pr.id}
+                      onClick={() => onPreset(pr)}
+                      title={pr.note}
+                      aria-pressed={on}
+                      className={`shrink-0 flex items-center gap-1.5 pl-2 pr-2.5 py-[3px] rounded-full text-[12.5px] whitespace-nowrap transition-colors ${
+                        on ? "bg-navy text-sheet border-[1.5px] border-navy" : "border-[1.25px] border-dashed border-ink/45 text-ink-2 hover:border-ink hover:text-ink hover:bg-note"
+                      }`}
+                    >
+                      <Icon name={pr.icon} className={on ? "" : "text-navy"} />
+                      {pr.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {active && (
+                <p className="text-[12.5px] text-ink-2 leading-snug mt-0.5 flex gap-1.5">
+                  <span className="hand text-navy shrink-0">↳</span>
+                  <span>{active.note} Press the red button to test it.</span>
+                </p>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap gap-x-4 gap-y-3 items-start">
             {dialsList.length > 0 && (
               <div className="flex flex-wrap gap-2">

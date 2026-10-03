@@ -319,7 +319,62 @@ body {
   fill: var(--navy);
   stroke: var(--navy);
 }
+/* Bridge-break section: the beam halves follow the scroll quickly, but fall like they have weight when it snaps */
+.bb-half {
+  transition: transform 0.12s linear;
+}
+.bb-half.is-broken {
+  transition: transform 0.55s cubic-bezier(0.55, 0, 1, 0.45);
+}
+.bb-block {
+  transition:
+    opacity 0.18s ease-out,
+    transform 0.5s cubic-bezier(0.55, 0, 1, 0.45);
+}
+.bb-splinter {
+  transition:
+    opacity 0.15s,
+    transform 0.45s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.bb-stamp {
+  transition:
+    opacity 0.2s,
+    transform 0.3s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+@keyframes bb-creak {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(0.7deg) translateY(0.5px); }
+  75% { transform: rotate(-0.7deg); }
+}
+.bb-creak {
+  animation: bb-creak 0.16s linear infinite;
+}
+/* margin doodles driven by the page scroll (--sy, --swing, --bounce are set from JS) */
+.pb-turn {
+  transform: rotate(calc(var(--sy, 0) * 0.2deg));
+}
+.pb-turn-back {
+  transform: rotate(calc(var(--sy, 0) * -0.3deg));
+}
+.pb-swing {
+  transform-origin: 45px 6px;
+  transform: rotate(var(--swing, 0deg));
+}
+.pb-bounce {
+  transform-origin: 35px 6px;
+  transform: scaleY(var(--bounce, 1));
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .bb-creak {
+    animation: none;
+  }
+  .bb-half,
+  .bb-block,
+  .bb-splinter,
+  .bb-stamp {
+    transition: none;
+  }
   [data-anim] .fall,
   [data-anim] .draw-in,
   [data-anim] .draw-bar {

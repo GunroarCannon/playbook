@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Crane, Gear, KnifeSwitch, SketchDefs, Walrus } from "./Doodles";
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { CATEGORIES, SIMS } from "@/lib/sims";
+import { BenchIcon, Crane, Gear, KnifeSwitch, SketchDefs, Walrus } from "./Doodles";
 import EmailSignup from "./EmailSignup";
 import Icon from "./Icon";
 import { LoginCard } from "./Login";
@@ -20,6 +21,29 @@ const GITHUB_URL = "https://github.com/GunroarCannon/playbook";
 export default function Landing({ signedIn }: { signedIn: boolean }) {
   const wrap = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
+
+  // the margin doodles (gears, pendulum, spring) turn with the page: scroll position goes out as CSS variables
+  useEffect(() => {
+    const el = root.current;
+    if (!el || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const sy = window.scrollY;
+      el.style.setProperty("--sy", String(Math.round(sy)));
+      el.style.setProperty("--swing", `${(Math.sin(sy / 110) * 26).toFixed(2)}deg`);
+      el.style.setProperty("--bounce", (1 + Math.sin(sy / 70) * 0.28).toFixed(3));
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(frame);
+    };
+  }, []);
 
   // "fall into place": anything with .fall / .draw-in animates once when it scrolls into view
   useEffect(() => {
@@ -43,7 +67,7 @@ export default function Landing({ signedIn }: { signedIn: boolean }) {
   const cta = signedIn ? { href: "/", label: "Back to my notebook" } : { href: "#start", label: "Open my notebook" };
 
   return (
-    <div ref={root} className="graph-paper min-h-dvh overflow-x-hidden">
+    <div ref={root} className="graph-paper min-h-dvh overflow-x-clip">
       <SketchDefs />
       {/* top bar */}
       <header className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center gap-3">
@@ -93,6 +117,7 @@ export default function Landing({ signedIn }: { signedIn: boolean }) {
       {/* everything the arrow runs through */}
       <div ref={wrap} className="relative">
         <ScrollArrow wrap={wrap} />
+        <MarginDoodles />
 
         {/* 1. Walrus */}
         <Row id="walrus" side="left" visual={<WalrusDiagram />}>
@@ -118,21 +143,11 @@ export default function Landing({ signedIn }: { signedIn: boolean }) {
             <Kicker icon="list-check">How it works</Kicker>
             <H2>Four steps, plain words</H2>
           </div>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-8 md:mt-10">
-            {STEPS.map((s, i) => (
-              <div key={s.title} className="fall sheet ink-box p-4 flex flex-col gap-2" style={v(i * 140, i % 2 ? 4 : -4)}>
-                <div className="flex items-center justify-between">
-                  <span className={`w-11 h-11 rounded-full flex items-center justify-center ${s.red ? "bg-red text-white" : "bg-navy-soft text-navy"}`}>
-                    <Icon name={s.icon} size={20} />
-                  </span>
-                  <span className="hand text-[28px] text-ink-3">{i + 1}</span>
-                </div>
-                <h3 className="hand text-[20px] leading-tight">{s.title}</h3>
-                <p className="text-[14px] text-ink-2">{s.body}</p>
-              </div>
-            ))}
-          </div>
+          <Steps />
         </section>
+
+        {/* 3. Watch it break (sticky: the bridges load up as you scroll) */}
+        <BreakSection />
 
         {/* 3. Graphs */}
         <Row id="see" side="right" visual={<Graphs />}>
@@ -159,20 +174,25 @@ export default function Landing({ signedIn }: { signedIn: boolean }) {
         </Row>
 
         {/* 5. Use cases */}
-        <section id="uses" className="relative max-w-6xl mx-auto pl-12 pr-4 sm:pr-6 md:px-6 py-14 sm:py-20">
-          <div className="max-w-[30rem]">
-            <Mark />
-            <Kicker icon="lightbulb">What people use it for</Kicker>
-            <H2>From school projects to shop floors</H2>
-            <P>Eight benches are ready to go. Each one remembers your settings and results separately.</P>
+        <section id="uses" className="relative pt-14 sm:pt-20 pb-10 sm:pb-14">
+          <div className="max-w-6xl mx-auto pl-12 pr-4 sm:pr-6 md:px-6">
+            <div className="max-w-[34rem]">
+              <Mark />
+              <Kicker icon="lightbulb">What people use it for</Kicker>
+              <H2>From school projects to shop floors</H2>
+              <P>
+                {SIMS.length} benches are ready to go, from egg drops to loan offers, each with a handful of one-click scenarios to start from. Each
+                one remembers your settings and results separately.
+              </P>
+            </div>
           </div>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-8">
-            {USES.map((u, i) => (
-              <div key={u.title} className="fall sheet ink-box-soft p-3 sm:p-4 flex flex-col gap-1.5" style={v((i % 4) * 90, i % 2 ? 3 : -3)}>
-                <Icon name={u.icon} size={26} className="text-navy" />
-                <h3 className="hand text-[17px] leading-tight mt-1">{u.title}</h3>
-                <p className="text-[13px] text-ink-2 leading-snug">{u.body}</p>
-              </div>
+          <BenchMarquee />
+          <div className="max-w-6xl mx-auto pl-12 pr-4 sm:pr-6 md:px-6 mt-6 flex flex-wrap gap-2">
+            {CATEGORIES.map((c, i) => (
+              <span key={c.id} className="fall flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-ink/30 bg-sheet text-[13px] text-ink-2" style={v(i * 80, i % 2 ? 4 : -4)}>
+                <Icon name={c.icon} className="text-navy" /> {c.label}
+                <span className="mono text-[10.5px] text-ink-3">{SIMS.filter((s) => s.category === c.id).length}</span>
+              </span>
             ))}
           </div>
         </section>
@@ -187,8 +207,8 @@ export default function Landing({ signedIn }: { signedIn: boolean }) {
             minute the AI writes a working simulation with dials, checks that the numbers make sense, and opens it for you.
           </P>
           <P>
-            It draws with a box of about 900 sketch sprites: people, elephants, lifts, stairs, coffee, cows, cars and more, so your idea looks like the
-            real thing.
+            It draws with a box of over 900 sketch sprites: people, elephants, kekes, water tanks, generators, parachutes, hens, lifts and more, so your
+            idea looks like the real thing.
           </P>
         </Row>
 
@@ -262,16 +282,28 @@ const STEPS: { icon: UiIconName; title: string; body: string; red?: boolean }[] 
   { icon: "brain", title: "It remembers", body: "Your limits, best result and failures go to Walrus Memory. Next time, it starts from there." },
 ];
 
-const USES: { icon: UiIconName; title: string; body: string }[] = [
-  { icon: "bridge", title: "School bridge contest", body: "Which popsicle-stick truss holds the most for the fewest sticks?" },
-  { icon: "cash-register", title: "Shop checkout", body: "How many cashiers so nobody waits more than 3 minutes?" },
-  { icon: "solar-panel", title: "Solar at home", body: "Will the battery last the night, or cut out at 2 a.m.?" },
-  { icon: "graduation-cap", title: "Saving for school fees", body: "Will ₦60,000 a month get there in 3 years with 25% inflation?" },
-  { icon: "rocket", title: "Bottle rocket", body: "How much water and pressure to reach 40 m?" },
-  { icon: "car-side", title: "Stopping distance", body: "Could you stop in time on a wet road at 80 km/h?" },
-  { icon: "virus", title: "Outbreak planning", body: "Do the hospital beds run out? When should distancing start?" },
-  { icon: "baseball", title: "Throws and pendulums", body: "Best launch angle, air drag, or a pendulum on Mars." },
-];
+/** The question each bench answers, for the drifting bench marquee. */
+const QUESTIONS: Record<string, string> = {
+  truss: "Which popsicle-stick truss holds the most for the fewest sticks?",
+  shelf: "Will this plank sag under my books?",
+  pulley: "How many ropes to lift a 120 kg engine?",
+  eggdrop: "Parachute or padding: what saves the egg?",
+  rocket: "How much water and pressure to reach 40 m?",
+  projectile: "Best launch angle, air drag, a pendulum on Mars.",
+  braking: "Could you stop in time on a wet road at 80?",
+  roadtrip: "Lagos to Abuja: how many fuel stops?",
+  solar: "Will the battery last the night?",
+  rainwater: "How big a tank so we never run dry?",
+  generator: "What will the gen cost me in fuel each week?",
+  cooling: "Is a 1 HP AC enough for this room?",
+  powerbill: "Which appliance is eating my prepaid units?",
+  savings: "Will ₦60,000 a month beat 25% inflation?",
+  loan: "Flat rate or reducing: what does it really cost?",
+  business: "When does my food stall pay for itself?",
+  queue: "How many cashiers so nobody waits 3 minutes?",
+  outbreak: "Do the hospital beds run out?",
+  evacuation: "Can 500 people get out in 2.5 minutes?",
+};
 
 // ------------------------------------------------------------------ layout bits
 
@@ -544,13 +576,285 @@ function WalrusDiagram() {
   );
 }
 
-/** Small charts in the style of the benches: a load test, a checkout line, a battery night, savings vs inflation. */
+// ------------------------------------------------------------------ scroll-driven animation
+
+const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
+/** Progress of the part of `p` between a and b, as 0..1. */
+const seg = (p: number, a: number, b: number) => clamp01((p - a) / (b - a));
+
+/**
+ * How far an element has travelled through the screen, 0..1, updated on scroll.
+ * "pass": 0 as it enters at the bottom, 1 when its middle reaches 40% from the top.
+ * "sticky": progress through a tall section whose content sticks to the screen.
+ * With reduced motion it is always 1 (the finished picture).
+ */
+function useScrub<T extends HTMLElement>(mode: "pass" | "sticky" = "pass") {
+  const ref = useRef<T>(null);
+  const [p, setP] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      if (still) return setP(1);
+      const r = el.getBoundingClientRect(), vh = window.innerHeight;
+      const raw = mode === "sticky" ? -r.top / Math.max(1, r.height - vh) : (vh * 0.95 - r.top) / (vh * 0.55 + r.height / 2);
+      setP(Math.round(clamp01(raw) * 500) / 500);
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    update();
+    if (still) return;
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      cancelAnimationFrame(frame);
+    };
+  }, [mode]);
+  return [ref, p] as const;
+}
+
+/** The four steps, joined by an arrow that draws itself as you scroll; each step lights up as the arrow reaches it. */
+function Steps() {
+  const [ref, p] = useScrub<HTMLDivElement>();
+  const reach = seg(p, 0.15, 0.85);
+  return (
+    <div ref={ref} className="relative mt-8 md:mt-10">
+      <svg className="hidden lg:block absolute left-0 right-0 -top-11 w-full h-10 text-navy pointer-events-none" viewBox="0 0 1000 40" preserveAspectRatio="none" aria-hidden>
+        <path d="M60 34 C 160 4, 270 4, 375 30 S 590 6, 625 30 S 840 4, 950 32" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" pathLength={1} strokeDasharray="1" strokeDashoffset={1 - reach} />
+        <path d="M938 22 L952 33 L936 40" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" opacity={reach > 0.97 ? 1 : 0} style={{ transition: "opacity .2s" }} />
+      </svg>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {STEPS.map((s, i) => {
+          const lit = reach >= i / 3 - 0.02;
+          return (
+            <div key={s.title} className="fall sheet ink-box p-4 flex flex-col gap-2" style={v(i * 140, i % 2 ? 4 : -4)}>
+              <div className="flex items-center justify-between">
+                <span
+                  className={`w-11 h-11 rounded-full flex items-center justify-center transition-colors duration-300 ${
+                    s.red ? (lit ? "bg-red text-white pb-jiggle" : "bg-red-soft text-red") : lit ? "bg-navy text-sheet" : "bg-navy-soft text-navy"
+                  }`}
+                >
+                  <Icon name={s.icon} size={20} />
+                </span>
+                <span className={`hand text-[28px] transition-colors duration-300 ${lit ? "text-navy" : "text-ink-3"}`}>{i + 1}</span>
+              </div>
+              <h3 className="hand text-[20px] leading-tight">{s.title}</h3>
+              <p className="text-[14px] text-ink-2">{s.body}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const BEAM_SNAPS = 2.1, TRUSS_LIMIT = 8.4, MAX_LOAD = 8;
+
+/** A tall section that pins the bridges to the screen while scrolling stacks weights on them. */
+function BreakSection() {
+  const [ref, p] = useScrub<HTMLElement>("sticky");
+  const load = +(seg(p, 0.06, 0.88) * MAX_LOAD).toFixed(2);
+  const caption =
+    load < 0.25
+      ? "Scroll to stack weights on both bridges."
+      : load < BEAM_SNAPS * 0.75
+        ? "Same popsicle sticks, same glue. The flat beam is already bending…"
+        : load < BEAM_SNAPS
+          ? "Creak. The flat beam is about to go…"
+          : load < 4.2
+            ? `Snap. The flat beam gave up at ${BEAM_SNAPS} kg.`
+            : load < MAX_LOAD - 0.05
+              ? `The Warren truss spreads the load through its triangles: still standing at ${load.toFixed(1)} kg.`
+              : "8 kg and still standing. Find that out on the bench, before you glue anything.";
+  return (
+    <section ref={ref} id="break" className="relative h-[240vh]">
+      <div className="absolute top-14 sm:top-20 inset-x-0 max-w-6xl mx-auto pl-12 pr-4 md:px-6 pointer-events-none">
+        <Mark />
+      </div>
+      <div className="sticky top-0 h-dvh flex items-center overflow-hidden">
+        <div className="max-w-6xl w-full mx-auto pl-12 pr-4 sm:pr-6 md:px-6 grid md:grid-cols-[1fr_88px_1fr] gap-y-4 items-center">
+          <div className="md:col-start-1 md:row-start-1">
+            <div className="h-8 hidden md:block" aria-hidden />
+            <Kicker icon="weight-hanging">Find the breaking point</Kicker>
+            <H2>Watch it bend, creak and snap</H2>
+            <p className="fall text-[16px] sm:text-[17px] text-ink-2 mt-3 sm:mt-4 leading-relaxed hidden sm:block" style={v(120, 0)}>
+              Every bench runs the real physics. Here are two bridges from the same box of sticks: a flat beam and a Warren truss. Keep scrolling to
+              pile on the weight.
+            </p>
+            <LoadGauge load={load} />
+          </div>
+          <div className="md:col-start-3 md:row-start-1">
+            <BridgeBreak load={load} />
+            <p className="hand text-[16px] sm:text-[17px] text-navy mt-2 min-h-[3em] leading-snug" aria-live="polite">
+              {caption}
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function LoadGauge({ load }: { load: number }) {
+  const pct = (x: number) => `${(x / MAX_LOAD) * 100}%`;
+  return (
+    <div className="mt-4 sm:mt-6 max-w-[24rem]">
+      <div className="flex items-baseline justify-between">
+        <span className="hand text-[15px] text-ink-2">Load on each bridge</span>
+        <span className="mono text-[22px] text-ink">{load.toFixed(1)} kg</span>
+      </div>
+      <div className="relative h-3 mt-1 ink-box-soft bg-sheet overflow-hidden">
+        <div className={`absolute inset-y-0 left-0 ${load >= BEAM_SNAPS ? "bg-amber" : "bg-navy"} opacity-50`} style={{ width: pct(load) }} />
+      </div>
+      <div className="relative h-5 mono text-[10px]">
+        <span className={`absolute -translate-x-[5px] ${load >= BEAM_SNAPS ? "text-red" : "text-ink-3"}`} style={{ left: pct(BEAM_SNAPS) }}>
+          ▲ beam snaps
+        </span>
+        <span className="absolute right-0 text-green">truss: fine ▲</span>
+      </div>
+    </div>
+  );
+}
+
+/** Two bridges under the same load: the flat beam sags and snaps at 2.1 kg, the Warren truss reddens but holds. */
+function BridgeBreak({ load }: { load: number }) {
+  const broken = load >= BEAM_SNAPS;
+  const r = Math.min(1, load / BEAM_SNAPS);
+  const sag = r * 10;
+  const beamCol = broken || r > 0.85 ? "var(--red)" : r > 0.55 ? "var(--amber)" : "currentColor";
+  const creak = !broken && r > 0.8;
+  const tilt = (Math.atan2(sag, 130) * 180) / Math.PI;
+  const beamBlocks = Math.min(3, Math.ceil(load - 0.3));
+  const trussBlocks = Math.min(8, Math.ceil(load - 0.3));
+  // Warren truss: 6 panels, bottom chord y=282, top chord y=248
+  const tr = load / TRUSS_LIMIT;
+  const xs = [30, 73.3, 116.7, 160, 203.3, 246.7, 290];
+  const dip = (x: number) => tr * 4 * Math.sin((Math.PI * (x - 30)) / 260);
+  const bottom = xs.map((x) => [x, 282 + dip(x)] as const);
+  const top = xs.slice(0, -1).map((x, i) => [(x + xs[i + 1]) / 2, 248 + dip((x + xs[i + 1]) / 2)] as const);
+  const mix = (c: string) => `color-mix(in srgb, ${c} ${Math.round(Math.min(1, tr * 1.05) * 100)}%, var(--ink))`;
+  const w = 1.6 + tr * 1.8;
+  const block = (i: number, x: number, y: number, show: boolean, fall: boolean) => (
+    <rect
+      key={i}
+      x={x - 12}
+      y={y - (i + 1) * 9}
+      width={24}
+      height={8}
+      rx={1}
+      fill="url(#pb-hatch)"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      className="bb-block"
+      style={{
+        opacity: show ? 1 : 0,
+        transform: fall ? `translate(${(i - 1) * 9}px, ${46 + i * 4}px) rotate(${(i - 1) * 25 + 10}deg)` : show ? "none" : "translateY(-14px)",
+        transformOrigin: `${x}px ${y - i * 9 - 4}px`,
+      }}
+    />
+  );
+  return (
+    <svg viewBox="0 0 320 340" className="w-full max-w-[460px] text-ink overflow-visible" aria-label={`Two bridges carrying ${load.toFixed(1)} kg`}>
+      {/* ---- flat beam ---- */}
+      <text x="10" y="18" className="hand" fontSize="14" fill="currentColor">
+        Flat beam · 8 sticks
+      </text>
+      <g fill="url(#pb-hatch)" stroke="currentColor" strokeWidth="1.4">
+        <rect x="6" y="80" width="24" height="44" />
+        <rect x="290" y="80" width="24" height="44" />
+      </g>
+      <path d="M0 124 H320" stroke="currentColor" strokeWidth="1.4" />
+      <g className={creak ? "bb-creak" : undefined} style={{ transformOrigin: "160px 80px" }}>
+        <g className={`bb-half ${broken ? "is-broken" : ""}`} style={{ transformOrigin: "30px 80px", transform: `rotate(${broken ? 32 : tilt}deg)` }}>
+          <path d="M30 80 H160" stroke={beamCol} strokeWidth="4" strokeLinecap="round" />
+        </g>
+        <g className={`bb-half ${broken ? "is-broken" : ""}`} style={{ transformOrigin: "290px 80px", transform: `rotate(${broken ? -32 : -tilt}deg)` }}>
+          <path d="M160 80 H290" stroke={beamCol} strokeWidth="4" strokeLinecap="round" />
+        </g>
+        {[...Array(3)].map((_, i) => block(i, 160, 78 + sag, i < beamBlocks, broken))}
+      </g>
+      {/* splinters fly out where it snapped */}
+      <g stroke="var(--red)" strokeWidth="1.6" strokeLinecap="round">
+        {[
+          [-22, -16, -40],
+          [18, -20, 35],
+          [-10, 22, 70],
+          [26, 12, -60],
+          [2, -26, 15],
+        ].map(([dx, dy, rot], i) => (
+          <path
+            key={i}
+            d="M157 86 h7"
+            className="bb-splinter"
+            style={{ opacity: broken ? 1 : 0, transform: broken ? `translate(${dx}px, ${dy}px) rotate(${rot}deg)` : "none", transformOrigin: "160px 86px" }}
+          />
+        ))}
+      </g>
+      <g className="bb-stamp" style={{ opacity: broken ? 1 : 0, transform: broken ? "rotate(-8deg) scale(1)" : "rotate(-8deg) scale(1.6)", transformOrigin: "232px 40px" }}>
+        <rect x="178" y="26" width="108" height="26" rx="3" fill="var(--sheet)" stroke="var(--red)" strokeWidth="2" />
+        <text x="232" y="44" textAnchor="middle" className="hand" fontSize="14" fill="var(--red)">
+          SNAPPED 2.1 kg
+        </text>
+      </g>
+
+      {/* ---- Warren truss ---- */}
+      <text x="10" y="168" className="hand" fontSize="14" fill="currentColor">
+        Warren truss · 23 sticks
+      </text>
+      <g fill="url(#pb-hatch)" stroke="currentColor" strokeWidth="1.4">
+        <rect x="6" y="284" width="24" height="44" />
+        <rect x="290" y="284" width="24" height="44" />
+      </g>
+      <path d="M0 328 H320" stroke="currentColor" strokeWidth="1.4" />
+      <g fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {/* tension (bottom chord) goes blue, compression (top chord) goes red as the load rises */}
+        <polyline points={bottom.map((q) => q.join(",")).join(" ")} stroke={mix("var(--blue)")} strokeWidth={w} />
+        <polyline points={top.map((q) => q.join(",")).join(" ")} stroke={mix("var(--red)")} strokeWidth={w} />
+        <polyline
+          points={bottom.flatMap((q, i) => (top[i] ? [q, top[i]] : [q])).map((q) => q.join(",")).join(" ")}
+          stroke={`color-mix(in srgb, var(--amber) ${Math.round(tr * 80)}%, var(--ink))`}
+          strokeWidth={w * 0.8}
+        />
+      </g>
+      {[...Array(8)].map((_, i) => block(i, 160, top[2][1] + 1 + 0.5 * (top[3][1] - top[2][1]), i < trussBlocks, false))}
+      <g className="bb-stamp" style={{ opacity: load >= MAX_LOAD - 0.05 ? 1 : 0, transform: load >= MAX_LOAD - 0.05 ? "rotate(-6deg) scale(1)" : "rotate(-6deg) scale(1.6)", transformOrigin: "248px 196px" }}>
+        <rect x="184" y="182" width="128" height="26" rx="3" fill="var(--sheet)" stroke="var(--green)" strokeWidth="2" />
+        <text x="248" y="200" textAnchor="middle" className="hand" fontSize="14" fill="var(--green)">
+          STILL STANDING
+        </text>
+      </g>
+    </svg>
+  );
+}
+
+/** Small charts in the style of the benches. They play forward as you scroll down and rewind as you scroll back. */
 function Graphs() {
+  const [ref, p] = useScrub<HTMLDivElement>();
+  const id = useId().replace(/:/g, "");
   const queue2 = series(40, (t, r) => 2 + t * 26 * (1 - t) * 2.2 + r * 3);
   const queue3 = series(40, (t, r) => 1 + t * 6 * (1 - t) * 2 + r * 1.5);
   const battery = series(40, (t) => (t < 0.62 ? 100 - t * 128 : 20));
+  const sick = series(40, (t) => 260 * Math.exp(-((t - 0.42) ** 2) / 0.018));
+  const paper = series(40, (t) => 0.1 + t * 0.85 + t * t * 0.25);
+  const real = series(40, (t) => 0.1 + t * 0.55);
+  const tc = seg(p, 0.1, 0.9); // how far along the line charts are
+  const at = (ys: number[]) => ys[Math.min(ys.length - 1, Math.round(tc * (ys.length - 1)))];
+  const night = 18 + tc * 12;
+  const clock = `${String(Math.floor(night) % 24).padStart(2, "0")}:${String(Math.floor((night % 1) * 60)).padStart(2, "0")}`;
+  const bars: [string, number, string][] = [
+    ["Flat beam", 2.1, "var(--red)"],
+    ["Pratt", 6.6, "var(--ink-2)"],
+    ["Howe", 6.6, "var(--ink-2)"],
+    ["Warren", 8.4, "var(--green)"],
+  ];
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div ref={ref} className="grid grid-cols-2 gap-3">
       {/* bars: which truss holds most */}
       <figure className="fall sheet ink-box p-3 col-span-2" style={v(0, -3)}>
         <figcaption className="hand text-[14px] mb-1">Bridge bench: what each 40 cm design holds (kg)</figcaption>
@@ -560,61 +864,80 @@ function Graphs() {
           <text x="32" y={90 - (5 / 8.4) * 70} className="mono" fontSize="9" fill="var(--red)">
             target 5 kg
           </text>
-          {[
-            ["Flat beam", 2.1, "var(--red)"],
-            ["Pratt", 6.6, "var(--ink-2)"],
-            ["Howe", 6.6, "var(--ink-2)"],
-            ["Warren", 8.4, "var(--green)"],
-          ].map(([label, kg, col], i) => {
-            const h = (Number(kg) / 8.4) * 70;
+          {bars.map(([label, kg, col], i) => {
+            const f = seg(p, 0.05 + i * 0.1, 0.45 + i * 0.1);
+            const h = (kg / 8.4) * 70 * f;
             return (
-              <g key={String(label)}>
-                <rect
-                  className="draw-bar"
-                  style={{ transitionDelay: `${300 + i * 160}ms` }}
-                  x={45 + i * 62}
-                  y={95 - h}
-                  width="34"
-                  height={h}
-                  fill={String(col)}
-                  fillOpacity="0.3"
-                  stroke={String(col)}
-                  strokeWidth="1.5"
-                />
-                <text x={62 + i * 62} y={91 - h} textAnchor="middle" className="mono" fontSize="10" fill="currentColor">
-                  {String(kg)}
+              <g key={label}>
+                <rect x={45 + i * 62} y={95 - h} width="34" height={h} fill={col} fillOpacity="0.3" stroke={col} strokeWidth="1.5" />
+                {label === "Flat beam" && f >= 1 && <path d={`M${45 + i * 62} ${95 - h - 3} l6 4 l6 -5 l6 5 l6 -4 l6 4 l4 -3`} stroke="var(--red)" fill="none" strokeWidth="1.2" />}
+                <text x={62 + i * 62} y={91 - h - (label === "Flat beam" && f >= 1 ? 5 : 0)} textAnchor="middle" className="mono" fontSize="10" fill="currentColor">
+                  {(kg * f).toFixed(1)}
                 </text>
                 <text x={62 + i * 62} y="107" textAnchor="middle" fontSize="10" fill="var(--ink-2)" className="hand">
-                  {String(label)}
+                  {label}
                 </text>
               </g>
             );
           })}
         </svg>
       </figure>
-      <MiniChart title="Checkout: people waiting" note="2 cashiers vs 3" d={0}>
-        <path className="draw-in" pathLength={1} d={toPath(queue2, 18)} stroke="var(--red)" strokeWidth="2" fill="none" style={v(400)} />
-        <path className="draw-in" pathLength={1} d={toPath(queue3, 18)} stroke="var(--green)" strokeWidth="2" fill="none" style={v(700)} />
+      <MiniChart id={`${id}q`} t={tc} title="Checkout: people waiting" note={`now: ${Math.max(0, Math.round(at(queue2)))} in line vs ${Math.max(0, Math.round(at(queue3)))}`} d={0}>
+        <path d={toPath(queue2, 18)} stroke="var(--red)" strokeWidth="2" fill="none" />
+        <path d={toPath(queue3, 18)} stroke="var(--green)" strokeWidth="2" fill="none" />
+        <Dot ys={queue2} max={18} t={tc} col="var(--red)" />
+        <Dot ys={queue3} max={18} t={tc} col="var(--green)" />
+        <text x="4" y="10" fontSize="8" className="mono" fill="var(--red)">2 tills</text>
+        <text x="4" y="20" fontSize="8" className="mono" fill="var(--green)">3 tills</text>
       </MiniChart>
-      <MiniChart title="Solar: battery overnight" note="cuts out at 20%" d={150}>
+      <MiniChart id={`${id}b`} t={tc} title="Solar: battery overnight" note={at(battery) <= 20.5 ? `${clock}: CUT OUT at 20%` : `${clock}: ${Math.round(at(battery))}% left`} warn={at(battery) <= 20.5} d={150}>
         <path d="M0 64 H160" stroke="var(--red)" strokeDasharray="4 4" strokeWidth="1" />
-        <path className="draw-in" pathLength={1} d={toPath(battery, 100)} stroke="var(--navy)" strokeWidth="2.2" fill="none" style={v(500)} />
+        <path d={toPath(battery, 100)} stroke="var(--navy)" strokeWidth="2.2" fill="none" />
+        <Dot ys={battery} max={100} t={tc} col={at(battery) <= 20.5 ? "var(--red)" : "var(--navy)"} />
+      </MiniChart>
+      <MiniChart id={`${id}o`} t={tc} title="Outbreak: sick vs hospital beds" note={at(sick) > 120 ? `day ${Math.round(tc * 180)}: beds full!` : `day ${Math.round(tc * 180)}: ${Math.round(at(sick))} need a bed`} warn={at(sick) > 120} d={0}>
+        <path d={`${toPath(sick, 300)} L160 78 L0 78 Z`} fill="var(--red)" fillOpacity="0.12" stroke="none" clipPath={`url(#${id}over)`} />
+        <clipPath id={`${id}over`}>
+          <rect x="0" y="0" width="160" height={78 - (120 / 300) * 74} />
+        </clipPath>
+        <path d={`M0 ${78 - (120 / 300) * 74} H160`} stroke="var(--green)" strokeDasharray="4 4" strokeWidth="1" />
+        <path d={toPath(sick, 300)} stroke="var(--red)" strokeWidth="2" fill="none" />
+        <Dot ys={sick} max={300} t={tc} col="var(--red)" />
+        <text x="104" y={74 - (120 / 300) * 74} fontSize="8" className="mono" fill="var(--green)">beds</text>
+      </MiniChart>
+      <MiniChart id={`${id}s`} t={tc} title="Savings: on paper vs what it buys" note={`year ${(tc * 3).toFixed(1)}: worth ${Math.round((at(real) / at(paper)) * 100)}% of the number`} d={150}>
+        <path d={`${toPath(paper, 1.2)} L${toPath(real, 1.2).replace(/^M/, "").split(" L").reverse().join(" L")} Z`} fill="var(--amber)" fillOpacity="0.12" />
+        <path d={toPath(paper, 1.2)} stroke="var(--navy)" strokeWidth="2" fill="none" />
+        <path d={toPath(real, 1.2)} stroke="var(--amber)" strokeWidth="2.2" fill="none" />
+        <Dot ys={paper} max={1.2} t={tc} col="var(--navy)" />
+        <Dot ys={real} max={1.2} t={tc} col="var(--amber)" />
       </MiniChart>
     </div>
   );
 }
 
-function MiniChart({ title, note, d, children }: { title: string; note: string; d: number; children: ReactNode }) {
+/** A mini chart whose lines are revealed up to t (0..1), with a dashed cursor at the reveal edge. */
+function MiniChart({ id, t, title, note, warn, d, children }: { id: string; t: number; title: string; note: string; warn?: boolean; d: number; children: ReactNode }) {
   return (
     <figure className="fall sheet ink-box p-3" style={v(d, d ? 4 : -4)}>
       <figcaption className="hand text-[13.5px] leading-tight">{title}</figcaption>
-      <svg viewBox="0 0 160 80" className="w-full mt-1" aria-hidden>
+      <svg viewBox="0 0 160 80" className="w-full mt-1 overflow-visible" aria-hidden>
+        <clipPath id={`${id}clip`}>
+          <rect x="-4" y="-10" width={164 * t + 4} height="100" />
+        </clipPath>
         <path d="M0 78 H160 M0 0 V78" stroke="currentColor" strokeWidth="1.3" />
-        {children}
+        <g clipPath={`url(#${id}clip)`}>{children}</g>
+        {t > 0.01 && t < 0.99 && <path d={`M${160 * t} 0 V78`} stroke="var(--ink-3)" strokeWidth="0.8" strokeDasharray="2 2" />}
       </svg>
-      <p className="mono text-[10px] text-ink-3">{note}</p>
+      <p className={`mono text-[10px] ${warn ? "text-red" : "text-ink-3"}`}>{note}</p>
     </figure>
   );
+}
+
+function Dot({ ys, max, t, col }: { ys: number[]; max: number; t: number; col: string }) {
+  if (t <= 0.01) return null;
+  const i = Math.min(ys.length - 1, Math.round(t * (ys.length - 1)));
+  return <circle cx={(i / (ys.length - 1)) * 160} cy={78 - (Math.max(0, ys[i]) / max) * 74} r="3" fill={col} stroke="var(--sheet)" strokeWidth="1" />;
 }
 
 /** n points of f(t, noise) for t in 0..1, deterministic noise */
@@ -625,6 +948,128 @@ function series(n: number, f: (t: number, r: number) => number) {
 }
 function toPath(ys: number[], max: number) {
   return ys.map((y, i) => `${i ? "L" : "M"}${((i / (ys.length - 1)) * 160).toFixed(1)} ${(78 - (Math.max(0, y) / max) * 74).toFixed(1)}`).join(" ");
+}
+
+/**
+ * Every bench, drifting past in two rows going opposite ways. Scrolling the page pushes the rows along
+ * (faster scrolling, faster drift). Paused on hover; a still, wrapped grid with reduced motion.
+ */
+function BenchMarquee() {
+  const box = useRef<HTMLDivElement>(null);
+  const rows = useRef<(HTMLDivElement | null)[]>([]);
+  const [still, setStill] = useState(false);
+  const half = Math.ceil(SIMS.length / 2);
+  const lines = [SIMS.slice(0, half), SIMS.slice(half)];
+
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const t = setTimeout(() => setStill(true), 0);
+      return () => clearTimeout(t);
+    }
+    let raf = 0, visible = false, hover = false, last = performance.now(), lastY = window.scrollY, push = 0;
+    const offs = [0, 0];
+    const tick = (now: number) => {
+      raf = 0;
+      if (!visible) return;
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const dy = window.scrollY - lastY;
+      lastY = window.scrollY;
+      push = push * 0.9 + dy * 0.6; // scrolling gives the rows a shove that fades out
+      const speed = hover ? 0 : 28 + push * 6;
+      rows.current.forEach((row, i) => {
+        if (!row) return;
+        const w = row.scrollWidth / 2;
+        offs[i] = (((offs[i] + speed * dt * (i ? -1 : 1)) % w) + w) % w;
+        row.style.transform = `translateX(${-offs[i]}px)`;
+      });
+      raf = requestAnimationFrame(tick);
+    };
+    const io = new IntersectionObserver(([e]) => {
+      visible = e.isIntersecting;
+      if (visible && !raf) {
+        last = performance.now();
+        lastY = window.scrollY;
+        raf = requestAnimationFrame(tick);
+      }
+    });
+    io.observe(el);
+    const enter = () => (hover = true), leave = () => (hover = false);
+    el.addEventListener("pointerenter", enter);
+    el.addEventListener("pointerleave", leave);
+    return () => {
+      io.disconnect();
+      cancelAnimationFrame(raf);
+      el.removeEventListener("pointerenter", enter);
+      el.removeEventListener("pointerleave", leave);
+    };
+  }, []);
+
+  const card = (s: (typeof SIMS)[number], k: string) => (
+    <div key={k} className="sheet ink-box-soft w-[250px] sm:w-[280px] shrink-0 p-3 flex gap-3 items-start">
+      <BenchIcon simId={s.id} size={42} className="text-navy shrink-0 wobble" />
+      <div className="min-w-0">
+        <h3 className="hand text-[16px] leading-tight">{s.name.replace(/ Bench$/, "")}</h3>
+        <p className="text-[12.5px] text-ink-2 leading-snug mt-0.5">{QUESTIONS[s.id] ?? s.tagline}</p>
+      </div>
+    </div>
+  );
+
+  if (still)
+    return (
+      <div className="max-w-6xl mx-auto pl-12 pr-4 sm:pr-6 md:px-6 mt-8 flex flex-wrap gap-3">{SIMS.map((s) => card(s, s.id))}</div>
+    );
+  return (
+    <div ref={box} className="mt-8 flex flex-col gap-3 overflow-hidden [mask-image:linear-gradient(90deg,transparent,#000_6%,#000_94%,transparent)]" aria-label="All the ready-made benches">
+      {lines.map((line, i) => (
+        <div
+          key={i}
+          ref={(r) => {
+            rows.current[i] = r;
+          }}
+          className="flex gap-3 w-max will-change-transform"
+        >
+          {[...line, ...line].map((s, j) => card(s, `${s.id}-${j}`))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Doodles in the wide-screen margins that turn with the page: meshing gears, a pendulum, a spring. */
+function MarginDoodles() {
+  return (
+    <div className="hidden min-[1440px]:block absolute inset-0 pointer-events-none text-navy" aria-hidden>
+      <div className="absolute top-[6%] left-[calc(50%-36rem-150px)] opacity-60">
+        <Gear size={92} className="pb-turn" />
+        <Gear size={62} className="pb-turn-back absolute top-[70px] left-[64px]" />
+      </div>
+      <div className="absolute top-[30%] right-[calc(50%-36rem-140px)] opacity-60">
+        <svg width="90" height="160" viewBox="0 0 90 160" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+          <path d="M10 6 H80" strokeWidth="2.4" />
+          <path d="M18 6 l-6 -5 M32 6 l-6 -5 M46 6 l-6 -5 M60 6 l-6 -5 M74 6 l-6 -5" opacity="0.6" />
+          <g className="pb-swing">
+            <path d="M45 6 V120" />
+            <circle cx="45" cy="132" r="12" fill="url(#pb-hatch)" />
+          </g>
+        </svg>
+      </div>
+      <div className="absolute top-[56%] left-[calc(50%-36rem-130px)] opacity-60">
+        <svg width="70" height="170" viewBox="0 0 70 170" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M8 6 H62" strokeWidth="2.4" />
+          <g className="pb-bounce">
+            <path d="M35 6 V16 L14 26 L56 38 L14 50 L56 62 L14 74 L56 86 L35 96 V104" />
+            <rect x="18" y="104" width="34" height="26" fill="url(#pb-hatch)" />
+          </g>
+        </svg>
+      </div>
+      <div className="absolute top-[80%] right-[calc(50%-36rem-150px)] opacity-60">
+        <Gear size={76} className="pb-turn-back" />
+      </div>
+    </div>
+  );
 }
 
 function Compare() {
@@ -655,8 +1100,8 @@ function Compare() {
 }
 
 const SPRITES: UiIconName[] = [
-  "elephant", "person-walking", "elevator", "stairs", "mug-hot", "cow", "car-side", "tree", "house", "solar-panel", "droplet", "bus",
-  "fish", "bread-slice", "wheelchair", "rocket", "bicycle", "fire", "tractor", "popsicle-stick",
+  "elephant", "keke", "water-tank", "generator", "parachute", "hen", "goat", "pulley", "tower-crane", "market-stall",
+  "jerrycan", "hand-pump", "ac-unit", "egg-cracked", "wheelbarrow", "person-walking", "cow", "bus", "solar-panel", "popsicle-stick",
 ];
 
 function SpriteBox() {

@@ -50,6 +50,19 @@ The tag and the `score=`/`params=` suffix let the app restore dials from recalle
 | Stopping Distance | Reaction distance + braking distance (v²/2a) with road surface, worn tyres, ABS, slope and phone distraction; a child runs out and you see the impact speed |
 | Savings Goal | Month-by-month saving with compound interest, yearly raises, inflation (goal in today's money) and an emergency withdrawal |
 | Bottle Rocket | Water rocket: thrust 2A(P−Patm), adiabatic air expansion, quadratic drag, fins vs tumbling, apogee vs target |
+| Shelf Sag | A plank as a beam: deflection and bending stress for bracket or floating shelves, even or point loads, six board materials, long-term creep |
+| Pulley, Lever & Ramp | Simple machines: block and tackle with pulley friction, levers, ramps with rolling or sliding friction, against your own strength |
+| Egg Drop | Fall with quadratic drag and a parachute, then crush distance through padding and ground: peak g on the egg |
+| Road Trip Fuel | Fuel use vs speed (drag grows with v²), load, AC and roof racks, with filling stations along the way |
+| Rainwater Tank | Daily roof run-off vs household use through a typical year for Lagos, Abuja, Kano or Nairobi rainfall |
+| Generator Fuel | One night's outage: kVA rating and overload, part-load fuel burn, tank life and the weekly fuel bill |
+| Room Cooling | Heat balance of one room through a hot day (roof type, windows, people, appliances) against an AC's capacity |
+| Electricity Bill | A month on a prepaid meter: each appliance's kWh capped by hours of supply, tariff and VAT, against a budget |
+| Loan Repayment | Flat-rate vs reducing-balance repayments, fees, and the true yearly rate (IRR) against what you can afford |
+| Break-even | A small shop or stall month by month: margin, fixed costs, growing sales and when the setup cost is paid back |
+| Evacuation | Everyone out of a hall: reaction time, walking to the nearest exit and queues at doors limited by flow per metre |
+
+Benches sit on five shelves in the picker (build, motion, home, money, people) with a search box. Every bench has 6–8 ready-made **scenarios** above its dials ("Saturday rush", "Texting at 80", "Microfinance, flat rate"…): one click sets every dial, and the bot knows their names. Some pass and some are meant to fail, so there's always something to fix.
 
 Each sim is a standalone HTML file in `public/sims/`, running in a sandboxed iframe (`sandbox="allow-scripts"`). It talks to the app over `postMessage` (`src/lib/protocol.ts`), so a generated sim can follow the same contract.
 
@@ -69,11 +82,11 @@ How it stays reliable with a 27B open model (`src/lib/sim-gen.ts`, `src/lib/sim-
 
 Benches draw real objects instead of boxes. The drawing kit (`public/sims/bench.js`) has three sprite helpers:
 
-- `D.icon(name, x, y, size, {color, flip, rotate, label})` draws one of ~900 icons from `public/sims/icons.js`: a "physical world" subset of [Font Awesome Free](https://fontawesome.com) (people, animals, vehicles, buildings, food, energy, weather, tools, money, medical…) plus hand-drawn extras Font Awesome doesn't have (elephant, popsicle stick, walrus). The pack loads lazily the first time a sim draws an icon.
+- `D.icon(name, x, y, size, {color, flip, rotate, label})` draws one of ~930 icons from `public/sims/icons.js`: a "physical world" subset of [Font Awesome Free](https://fontawesome.com) (people, animals, vehicles, buildings, food, energy, weather, tools, money, medical…) plus hand-drawn extras Font Awesome doesn't have (elephant, walrus, popsicle stick, and sim doodles in `scripts/doodle-sprites.mjs`: pulley, water tank, generator, parachute, keke, market stall, jerrycan, hand pump, AC unit, prepaid meter, hen, goat and more). The pack loads lazily the first time a sim draws an icon.
 - `D.person(x, y, h, {pose})` draws a stick figure: stand, walk, run, wave, sit, carry, lie, fall.
 - `D.token(label, x, y, size)` draws a labelled circle for anything with no icon. An unknown icon name falls back to a token, so a typo never crashes a sim.
 
-The AI never sees all 900 names. `src/lib/icons.ts` searches an icon map (names, labels, Font Awesome's search terms and our aliases such as `coffee → mug-hot`, `lift → elevator`) for the words in the request and puts the ~20 best matches in the prompt. The full map is in [docs/ICONS.md](docs/ICONS.md). Regenerate everything with `node scripts/build-icons.mjs`.
+The AI never sees all 930 names. `src/lib/icons.ts` searches an icon map (names, labels, Font Awesome's search terms and our aliases such as `coffee → mug-hot`, `lift → elevator`) for the words in the request and puts the ~20 best matches in the prompt. The full map is in [docs/ICONS.md](docs/ICONS.md). Regenerate everything with `node scripts/build-icons.mjs`.
 
 On a phone, every sim is laid out at 500 px wide and scaled down, so labels shrink instead of colliding.
 

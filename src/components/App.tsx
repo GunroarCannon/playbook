@@ -4,7 +4,7 @@ import type { UIMessage } from "ai";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SimResult } from "@/lib/protocol";
 import { buildSimDoc } from "@/lib/sim-doc";
-import { SIMS, defaultParams, getSim, registerCustomSims, sanitizeParams, type ParamValue, type SimDef } from "@/lib/sims";
+import { CATEGORIES, SIMS, defaultParams, getSim, registerCustomSims, sanitizeParams, type ParamValue, type SimCategory, type SimDef, type SimPreset } from "@/lib/sims";
 import ChatPanel, { type ChatApi, type ChatBody } from "./ChatPanel";
 import { Atom, BenchIcon, Compass, Flask, Gear, MagicFlask, SetSquare, SketchDefs, Walrus } from "./Doodles";
 import EmailSignup from "./EmailSignup";
@@ -59,6 +59,61 @@ const SUGGESTIONS: Record<string, string[]> = {
     "How much water should I put in for the highest flight?",
     "Do fins really matter?",
   ],
+  shelf: [
+    "I want a 1 m pine shelf for about 40 kg of books. How thick should the plank be?",
+    "Will an 18 mm MDF shelf sag over time?",
+    "How far can a floating shelf stick out and still hold a microwave?",
+  ],
+  pulley: [
+    "I need to lift a 120 kg engine and can pull about 30 kg. How many ropes do I need?",
+    "How long should a wheelchair ramp be for a 50 cm step?",
+    "Where should I put the pivot to lever up a 200 kg stone?",
+  ],
+  eggdrop: [
+    "Egg drop contest from the 3rd floor (about 10 m). We can use straws, tape and a plastic bag.",
+    "Is a parachute or padding more important?",
+    "How big a parachute stops the egg cracking on concrete?",
+  ],
+  roadtrip: [
+    "I'm driving Lagos to Abuja in a Corolla with a 50 L tank. How many fuel stops will I need?",
+    "How much fuel do I save going 100 instead of 130 km/h?",
+    "There's no fuel for 300 km on part of my route. Will I make it?",
+  ],
+  rainwater: [
+    "My roof is about 100 m² in Abuja and we are 6 people. How big a tank so we never run dry?",
+    "Is rainwater enough for drinking and cooking all year?",
+    "Does a tile roof collect much less than a metal one?",
+  ],
+  generator: [
+    "I have a 2.5 kVA petrol gen and NEPA is off 10 hours a night. What will fuel cost me each week?",
+    "Can my 3.5 kVA run a 1.5 HP AC and the fridge?",
+    "Is diesel cheaper to run than petrol for my shop?",
+  ],
+  cooling: [
+    "My bedroom is 4 x 4 m with a zinc roof and gets very hot. Is a 1 HP AC enough?",
+    "Would a ceiling board help more than a bigger AC?",
+    "What size AC do I need for a 30 m² living room?",
+  ],
+  powerbill: [
+    "I'm on Band A at ₦209/kWh and my bill is ₦70,000 a month. What's eating my units?",
+    "How much does running the AC all night really cost?",
+    "Is the water heater worth it?",
+  ],
+  loan: [
+    "A microfinance bank offers me ₦500,000 at 5% flat a month for 6 months. Is that a good deal?",
+    "I earn ₦250,000 a month. How big a car loan can I afford?",
+    "What's the real difference between flat and reducing-balance interest?",
+  ],
+  business: [
+    "I want to open a small food stall. Rent is ₦20,000 a month and I can sell 60 plates a day at ₦1,500.",
+    "How many sales a day do I need just to cover my costs?",
+    "Should I raise my price or try to sell more?",
+  ],
+  evacuation: [
+    "Our church hall holds 500 people and has two doors. Can everyone get out in 2.5 minutes?",
+    "How much does one blocked exit slow things down?",
+    "How wide should the doors be for a school assembly of 1,000 children?",
+  ],
 };
 
 const CUSTOM_SUGGESTIONS = [
@@ -68,8 +123,8 @@ const CUSTOM_SUGGESTIONS = [
 ];
 
 const BUILD_EXAMPLES: { icon: UiIconName; text: string }[] = [
-  { icon: "droplet", text: "Rainwater tank for my house: roof size, rainfall, tank size, daily use. Does it run dry in the dry season?" },
-  { icon: "plug-circle-bolt", text: "A generator for my shop: fuel tank, load in watts, hours of NEPA outage. When does it run out?" },
+  { icon: "egg", text: "Poultry farm: 500 layers, feed price per bag, egg price per crate. How long until it pays for itself?" },
+  { icon: "fish", text: "Fish pond: number of catfish, feed per day, months to harvest, selling price. Is it profitable?" },
   { icon: "bread-slice", text: "Baking bread: dough temperature, yeast amount, proving time. Does it rise enough?" },
   { icon: "elevator", text: "Office lift vs stairs: 6 floors, 120 staff arriving at 9am, one lift. How long is the queue?" },
 ];
@@ -339,6 +394,13 @@ export default function App() {
     if (o.runTest) setRunSignal((n) => n + 1);
   }
 
+  /** One-click scenario: every dial it lists, everything else back to its default. */
+  function applyPreset(p: SimPreset) {
+    const next = { ...defaultParams(sim.params), ...p.params };
+    flash(Object.keys(next).filter((k) => next[k] !== dials[k]));
+    setDials(next);
+  }
+
   function switchBench(next: string) {
     const s = getSim(next);
     if (!s) return;
@@ -550,6 +612,7 @@ export default function App() {
               dials={dials}
               onDial={onDial}
               onReset={() => setDials(defaultParams(sim.params))}
+              onPreset={applyPreset}
               flashKeys={flashKeys}
               theme={theme}
               runSignal={runSignal}
@@ -685,12 +748,34 @@ function BenchPicker({
     }
   }
 
+  const [query, setQuery] = useState("");
+  const [cat, setCat] = useState<SimCategory | "all">("all");
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = (s: SimDef) => {
+    if (!words.length) return true;
+    const hay = [s.name, s.tagline, ...s.keywords, ...(s.presets ?? []).map((p) => p.label)].join(" ").toLowerCase();
+    return words.every((w) => hay.includes(w));
+  };
+  const found = SIMS.filter(matches);
+  const builtIn = found.filter((s) => cat === "all" || s.category === cat);
+  const mine = custom.filter(matches);
+  const tabs = [{ id: "all" as const, label: "All", icon: "list-check" as const }, ...CATEGORIES];
+  const shelves = CATEGORIES.map((c) => ({ ...c, sims: builtIn.filter((s) => s.category === c.id) })).filter((c) => c.sims.length);
+
   const card = (s: SimDef) => (
-    <button key={s.id} onClick={() => onPick(s.id)} disabled={building} className="btn-ink text-left p-3 flex gap-3 items-start font-sans disabled:opacity-50">
-      <BenchIcon simId={s.id} size={50} className="text-navy shrink-0 wobble" />
-      <span className="min-w-0">
+    <button key={s.id} onClick={() => onPick(s.id)} disabled={building} className="btn-ink text-left p-3 flex gap-3 items-start font-sans disabled:opacity-50 group">
+      <BenchIcon simId={s.id} size={50} className="text-navy shrink-0 wobble transition-transform group-hover:-rotate-6" />
+      <span className="min-w-0 flex-1">
         <span className="hand text-[17px] block leading-tight">{s.name}</span>
-        <span className="text-[13px] text-ink-2 font-sans">{s.tagline}</span>
+        <span className="text-[13px] text-ink-2 font-sans block">{s.tagline}</span>
+        {!!s.presets?.length && (
+          <span className="mt-1.5 flex items-center gap-1.5 text-[11.5px] text-ink-3 font-sans">
+            <Icon name="sliders" className="text-navy shrink-0" />
+            <span className="truncate">
+              {s.presets.length} scenarios: {s.presets.slice(0, 3).map((p) => p.label).join(" · ")}…
+            </span>
+          </span>
+        )}
       </span>
     </button>
   );
@@ -737,13 +822,14 @@ function BenchPicker({
             ) : (
               <>
                 <textarea
+                  id="pb-idea"
                   value={idea}
                   onChange={(e) => setIdea(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) build();
                   }}
                   rows={2}
-                  placeholder="e.g. A water tank for my house: roof size, rainfall, daily use. Does it run dry?"
+                  placeholder="e.g. A poultry farm: number of birds, feed price, egg price. When does it pay for itself?"
                   className="mt-2 w-full resize-none bg-sheet border-[1.5px] border-ink/40 focus:border-ink rounded-[3px] outline-none text-[14.5px] px-2 py-1.5 placeholder:text-ink-3"
                 />
                 <div className="flex flex-wrap gap-1.5 mt-1.5 items-center">
@@ -763,17 +849,80 @@ function BenchPicker({
             )}
           </section>
 
-          {custom.length > 0 && (
+          {/* find a ready-made bench */}
+          <section className="flex flex-col gap-2.5">
+            <div className="flex items-center gap-2 border-b-[1.5px] border-ink/40 focus-within:border-ink">
+              <Icon name="magnifying-glass" className="text-ink-3" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={`Search ${SIMS.length} ready-made benches: water, loan, bridge, AC…`}
+                className="flex-1 bg-transparent outline-none text-[14.5px] py-1.5 placeholder:text-ink-3 min-w-0"
+                aria-label="Search benches"
+              />
+              {query && (
+                <button onClick={() => setQuery("")} className="p-1 text-ink-3 hover:text-ink" aria-label="Clear search">
+                  <Icon name="xmark" />
+                </button>
+              )}
+            </div>
+            <div className="flex gap-1.5 overflow-x-auto -mx-1 px-1 pb-1" role="tablist" aria-label="Bench shelves">
+              {tabs.map((c) => {
+                const n = c.id === "all" ? found.length : found.filter((s) => s.category === c.id).length;
+                const on = cat === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    role="tab"
+                    aria-selected={on}
+                    onClick={() => setCat(c.id)}
+                    className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[13px] whitespace-nowrap ${
+                      on ? "bg-ink text-sheet border border-ink" : "border border-ink/30 text-ink-2 hover:border-ink hover:text-ink"
+                    } ${n === 0 && !on ? "opacity-40" : ""}`}
+                  >
+                    <Icon name={c.icon} />
+                    {c.label}
+                    <span className={`mono text-[10.5px] ${on ? "opacity-70" : "text-ink-3"}`}>{n}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          {mine.length > 0 && (
             <section>
-              <h3 className="hand text-[13px] text-ink-3 uppercase tracking-wider mb-2">Your AI-built benches</h3>
-              <div className="grid sm:grid-cols-2 gap-3">{custom.map(card)}</div>
+              <h3 className="hand text-[13px] text-ink-3 uppercase tracking-wider mb-2 flex items-center gap-2">
+                <Icon name="wand-magic-sparkles" className="text-navy" /> Your AI-built benches
+              </h3>
+              <div className="grid sm:grid-cols-2 gap-3">{mine.map(card)}</div>
             </section>
           )}
 
-          <section>
-            <h3 className="hand text-[13px] text-ink-3 uppercase tracking-wider mb-2">Hand-built benches</h3>
-            <div className="grid sm:grid-cols-2 gap-3">{SIMS.map(card)}</div>
-          </section>
+          {shelves.map((c) => (
+            <section key={c.id}>
+              <h3 className="hand text-[13px] text-ink-3 uppercase tracking-wider mb-2 flex items-center gap-2">
+                <Icon name={c.icon} className="text-navy" /> {c.label}
+              </h3>
+              <div className="grid sm:grid-cols-2 gap-3">{c.sims.map(card)}</div>
+            </section>
+          ))}
+
+          {builtIn.length === 0 && mine.length === 0 && (
+            <div className="ink-box-soft border-dashed p-4 text-center flex flex-col items-center gap-2">
+              <p className="text-[14px] text-ink-2">
+                No ready-made bench for &ldquo;{query}&rdquo;{cat !== "all" ? " on this shelf" : ""}. The AI can build one for you.
+              </p>
+              <button
+                onClick={() => {
+                  setIdea(`A simulation of ${query}: `);
+                  document.getElementById("pb-idea")?.focus();
+                }}
+                className="btn-ink px-3 py-1 text-[14px] flex items-center gap-2"
+              >
+                <Icon name="wand-magic-sparkles" /> Describe it to the AI
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

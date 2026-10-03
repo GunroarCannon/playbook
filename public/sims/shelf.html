@@ -1,0 +1,201 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Shelf Sag Bench — a plank as a beam. I = b h^3 / 12, bending stress = M (h/2) / I.
+ * Two brackets (simply supported): even load  d = 5 w L^4 / 384 E I,  M = w L^2 / 8
+ *                                  point (middle) d = P L^3 / 48 E I,  M = P L / 4
+ * Floating shelf (cantilever):     even load  d = w L^4 / 8 E I,      M = w L^2 / 2
+ *                                  point (front edge) d = P L^3 / 3 E I, M = P L
+ * The shelf's own weight is always added as an even load. Wood-based boards creep: the long-term sag is
+ * the instant sag x a creep factor. Limits: sag <= span/200 (brackets) or length/100 (floating),
+ * stress <= the board's allowable bending stress (strength / safety factor).
+ */
+const MAT = {
+  pine:      { name: "pine plank",   E: 9e9,   allow: 14e6,  rho: 500,  creep: 1.5 },
+  plywood:   { name: "plywood",      E: 8e9,   allow: 14e6,  rho: 600,  creep: 1.5 },
+  mdf:       { name: "MDF",          E: 3.5e9, allow: 10e6,  rho: 750,  creep: 2.5 },
+  chipboard: { name: "chipboard",    E: 2.5e9, allow: 6e6,   rho: 650,  creep: 2.5 },
+  glass:     { name: "toughened glass", E: 70e9, allow: 30e6, rho: 2500, creep: 1 },
+  steel:     { name: "steel sheet",  E: 200e9, allow: 160e6, rho: 7850, creep: 1 },
+};
+const G = 9.81;
+
+function respond(p, Pn) {
+  const m = MAT[p.material] || MAT.pine;
+  const L = +p.spanCm / 100, b = +p.depthCm / 100, h = +p.thickMm / 1000;
+  const I = (b * h * h * h) / 12, EI = m.E * I;
+  const ws = m.rho * b * h * G; // own weight, N/m
+  const cant = p.supports === "cantilever", even = p.loadType === "even";
+  let d, M;
+  if (!cant) {
+    d = (5 * ws * L ** 4) / (384 * EI) + (even ? (5 * (Pn / L) * L ** 4) / (384 * EI) : (Pn * L ** 3) / (48 * EI));
+    M = (ws * L * L) / 8 + (even ? (Pn * L) / 8 : (Pn * L) / 4);
+  } else {
+    d = (ws * L ** 4) / (8 * EI) + (even ? ((Pn / L) * L ** 4) / (8 * EI) : (Pn * L ** 3) / (3 * EI));
+    M = (ws * L * L) / 2 + (even ? (Pn * L) / 2 : Pn * L);
+  }
+  return { d, sigma: (M * (h / 2)) / I };
+}
+
+function simulate(p) {
+  const m = MAT[p.material] || MAT.pine;
+  const L = +p.spanCm / 100, cant = p.supports === "cantilever";
+  const limit = cant ? L / 100 : L / 200;
+  const P = +p.loadKg * G;
+  const r0 = respond(p, 0), r1 = respond(p, 1), r = respond(p, P);
+  const perN = { d: r1.d - r0.d, s: r1.sigma - r0.sigma };
+  const longD = r.d * m.creep;
+  const strengthOk = r.sigma <= m.allow, sagOk = longD <= limit;
+  // the most it could take before either limit is reached
+  const maxByS = (m.allow - r0.sigma) / perN.s, maxByD = (limit / m.creep - r0.d) / perN.d;
+  const maxKg = Math.max(0, Math.min(maxByS, maxByD) / G);
+  const breakKg = Math.max(0, maxByS / G * 2.5); // actual breaking load (allowable has a 2.5x safety factor)
+  return { m, L, limit, P, d: r.d, longD, sigma: r.sigma, strengthOk, sagOk, ok: strengthOk && sagOk, maxKg, breakKg, governs: maxByS < maxByD ? "strength" : "sag", r0, perN, cant };
+}
+
+const mm = (m) => (m * 1000).toFixed(m < 0.01 ? 1 : 0);
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  Bench.metrics({
+    stressRatio: Math.max(R.sigma / R.m.allow, R.longD / R.limit),
+    label: `sags ${mm(R.longD)} mm long-term (limit ${mm(R.limit)}) · stress ${Math.round((100 * R.sigma) / R.m.allow)}% of allowable`,
+    values: { sagMm: +mm(R.longD), limitMm: +mm(R.limit), stressPct: Math.round((100 * R.sigma) / R.m.allow), maxKg: Math.round(R.maxKg) },
+  });
+}
+
+Bench.init({
+  params: { material: "pine", supports: "simple", spanCm: 80, thickMm: 18, depthCm: 25, loadKg: 30, loadType: "even" },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, dur: 5.5, done: false, p: { ...p } }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+    const t = anim ? now - anim.t0 : 99;
+    if (anim && !anim.done && t >= anim.dur) { anim.done = true; finish(anim.p); }
+
+    // load on the shelf right now (ramps up over 3 s), and whether it has snapped
+    const loadFrac = anim ? D.clamp(t / 3, 0, 1) : 1;
+    const kgNow = +p.loadKg * loadFrac;
+    const breaks = anim && +p.loadKg > R.breakKg && R.breakKg >= 0;
+    const tBreak = breaks ? 3 * (R.breakKg / Math.max(1e-6, +p.loadKg)) : Infinity;
+    const snapped = anim && t > tBreak;
+    const creepT = anim ? D.clamp((t - 3.2) / 1.5, 0, 1) : 1;
+    const dNow = R.r0.d + R.perN.d * Math.min(kgNow, breaks ? R.breakKg : kgNow) * G;
+    const dShown = dNow * (1 + (R.m.creep - 1) * creepT);
+    const ratio = Math.max((R.r0.sigma + R.perN.s * kgNow * G) / R.m.allow, dShown / R.limit);
+
+    D.text(`${p.thickMm} mm ${R.m.name}, ${p.depthCm} cm deep, ${R.cant ? `floating ${p.spanCm} cm out from the wall` : `${p.spanCm} cm between brackets`}`, 18, 28, { size: 14 });
+    D.text(`${p.loadKg} kg ${p.loadType === "even" ? "spread out" : R.cant ? "at the front edge" : "in the middle"} · sag ${mm(R.d)} mm now, ${mm(R.longD)} mm after a few months (limit ${mm(R.limit)})`, 18, 48, { size: 12, mono: true, color: C.ink2 });
+
+    // ---- drawing
+    const y0 = Math.max(150, H * 0.5), x0 = R.cant ? 110 : 90, x1 = R.cant ? W - 170 : W - 90, len = x1 - x0;
+    const exag = Math.min(70, Math.max(6, (dShown / R.limit) * 28)); // drawn sag in px (exaggerated, capped)
+    const shape = (xi) => (R.cant ? (3 * xi * xi - xi * xi * xi) / 2 : Math.sin(Math.PI * xi));
+    const yAt = (xi) => y0 + exag * shape(xi);
+    const th = Math.max(5, Math.min(16, +p.thickMm / 2.2));
+    const col = ratio > 1 ? C.red : ratio > 0.75 ? C.amber : C.ink;
+
+    // supports
+    if (R.cant) {
+      ctx.fillStyle = C.ink; ctx.globalAlpha = 0.08; ctx.fillRect(x0 - 40, 70, 40, H - 110); ctx.globalAlpha = 1;
+      D.rect(x0 - 40, 70, 40, H - 110, { hatch: true, seed: 2 });
+      D.text("wall", x0 - 20, H - 26, { size: 11, align: "center", color: C.ink2 });
+    } else {
+      ctx.fillStyle = C.ink; ctx.globalAlpha = 0.06; ctx.fillRect(x0 - 70, 70, len + 140, 10); ctx.globalAlpha = 1;
+      for (const bx of [x0 + 6, x1 - 6]) {
+        D.line(bx, y0 + th, bx, y0 + th + 34, { width: 2 }); D.line(bx, y0 + th + 34, bx + (bx < W / 2 ? -1 : 1) * -26, y0 + th, { width: 1.6 });
+      }
+    }
+
+    // plank (polyline top + bottom), snaps at the point of biggest bending moment
+    const N = 40, brk = R.cant ? 0.02 : 0.5;
+    const drawPlank = (a, b, rot, ox, oy) => {
+      ctx.save(); ctx.translate(ox, oy); ctx.rotate(rot); ctx.translate(-ox, -oy);
+      ctx.fillStyle = C.amber; ctx.globalAlpha = 0.16; ctx.beginPath();
+      for (let i = 0; i <= N; i++) { const xi = a + ((b - a) * i) / N; const x = x0 + xi * len; i ? ctx.lineTo(x, yAt(xi)) : ctx.moveTo(x, yAt(xi)); }
+      for (let i = N; i >= 0; i--) { const xi = a + ((b - a) * i) / N; ctx.lineTo(x0 + xi * len, yAt(xi) + th); }
+      ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+      ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.stroke();
+      ctx.restore();
+    };
+    let fall = 0;
+    if (snapped) {
+      fall = D.clamp((t - tBreak) / 0.6, 0, 1);
+      if (R.cant) drawPlank(0, 1, fall * 1.1, x0, y0);
+      else { drawPlank(0, brk, fall * 0.6, x0, y0); drawPlank(brk, 1, -fall * 0.6, x1, y0); }
+      for (let k = 0; k < 5; k++) D.line(x0 + brk * len - 6 + k * 3, yAt(brk) - 6, x0 + brk * len - 10 + k * 5, yAt(brk) + th + 8, { color: C.red, width: 1, single: true, seed: 90 + k });
+    } else drawPlank(0, 1, 0, x0, y0);
+
+    // load: books (even) or one box (point)
+    if (!snapped || fall < 1) {
+      const drop = snapped ? fall * 120 : 0;
+      if (p.loadType === "even") {
+        const nBooks = Math.max(1, Math.min(22, Math.round(+p.loadKg / 1.5)));
+        const shown = Math.ceil(nBooks * loadFrac);
+        const r = D.rng(7), bw = (len - 16) / nBooks;
+        for (let k = 0; k < shown; k++) {
+          const xi = (k + 0.5) / nBooks, bh = 22 + r() * 18, w = Math.max(4, bw - 2);
+          const x = x0 + 8 + k * bw, yb = yAt(xi) + drop;
+          D.rect(x, yb - bh, w, bh, { fill: [C.navy, C.red, C.green, C.amber][k % 4], fillAlpha: 0.22, color: C.ink2, width: 1.2, seed: 300 + k, rough: 0.6 });
+        }
+      } else if (loadFrac > 0) {
+        const xi = R.cant ? 0.94 : 0.5, bx = x0 + xi * len, bs = 26 + Math.min(30, +p.loadKg / 2), yb = yAt(xi) + drop - (anim ? (1 - loadFrac) * 40 : 0);
+        D.rect(bx - bs / 2, yb - bs, bs, bs, { fill: C.paper, hatch: true, seed: 401 });
+        D.text(`${Math.round(kgNow)} kg`, bx, yb - bs - 6, { size: 12, mono: true, align: "center" });
+      }
+    }
+    if (!snapped) {
+      D.dim(x0, y0 - 66, x1, y0 - 66, `${p.spanCm} cm`, { color: C.ink3 });
+      const xm = x0 + (R.cant ? 1 : 0.5) * len;
+      D.line(xm + 12, y0, xm + 12, yAt(R.cant ? 1 : 0.5), { color: C.red, width: 1, single: true });
+      D.text(`sag ${mm(dShown)} mm`, xm + (R.cant ? -6 : 18), y0 + exag / 2 + th + 22, { size: 12, mono: true, color: dShown > R.limit ? C.red : C.ink2, align: R.cant ? "right" : "left" });
+      D.text("(sag drawn exaggerated)", xm + (R.cant ? -6 : 18), y0 + exag / 2 + th + 36, { size: 10, color: C.ink3, align: R.cant ? "right" : "left" });
+    }
+    if (anim && t > 3.2 && t < anim.dur && !snapped && R.m.creep > 1) D.text("…a few months later (wood creeps)", W / 2, H - 40, { size: 13, align: "center", color: C.amber });
+
+    // stress meter
+    const mx = W - 140, my = 82;
+    D.text("strength used", mx, my, { size: 11, color: C.ink2 });
+    D.rect(mx, my + 6, 110, 10, { seed: 81 });
+    const sr = D.clamp(R.sigma / R.m.allow, 0, 1.5);
+    ctx.fillStyle = sr > 1 ? C.red : sr > 0.75 ? C.amber : C.green; ctx.globalAlpha = 0.5; ctx.fillRect(mx + 1, my + 7, (108 * Math.min(1, sr)), 8); ctx.globalAlpha = 1;
+    D.text(`${Math.round(sr * 100)}%`, mx + 116, my + 15, { size: 10, mono: true });
+    D.text(`could take ~${Math.round(R.maxKg)} kg`, mx, my + 32, { size: 11, mono: true, color: C.ink2 });
+
+    if (anim && anim.done) D.stamp(R.ok ? "HOLDS, SAG OK" : !R.strengthOk ? (breaks ? "SNAPPED" : "OVERSTRESSED") : "SAGS TOO MUCH", W / 2, 110, R.ok ? C.green : C.red);
+    if (!anim) D.text("(projection — press RUN TEST to load the shelf)", 18, H - 12, { size: 11, color: C.ink3 });
+  },
+});
+
+function finish(p) {
+  const desc = `${p.thickMm} mm ${R.m.name}, ${p.depthCm} cm deep, ${R.cant ? `floating shelf ${p.spanCm} cm long` : `${p.spanCm} cm span on two brackets`}, ${p.loadKg} kg ${p.loadType === "even" ? "spread out" : "in one spot"}`;
+  const stats = `sags ${mm(R.d)} mm at once and ${mm(R.longD)} mm long-term (limit ${mm(R.limit)} mm), uses ${Math.round((100 * R.sigma) / R.m.allow)}% of its allowable strength, could safely take about ${Math.round(R.maxKg)} kg`;
+  const why = [];
+  if (!R.strengthOk) why.push(`bending stress is ${Math.round((100 * R.sigma) / R.m.allow)}% of what ${R.m.name} can safely take${+p.loadKg > R.breakKg ? " and it would actually break" : ""}`);
+  if (!R.sagOk) why.push(`it would sag ${mm(R.longD)} mm, more than the ${mm(R.limit)} mm you'd notice`);
+  Bench.result({
+    passed: R.ok,
+    summary: `${desc}: ${stats}.`,
+    failureReason: R.ok ? undefined : why.join("; ") + `. Thickness matters most: sag falls with the cube of thickness, so going from ${p.thickMm} to ${Math.round(+p.thickMm * 1.25)} mm roughly halves it`,
+    score: R.ok ? Math.round(R.maxKg) : undefined, scoreLabel: "kg it could safely take",
+    metrics: { sagMm: +mm(R.longD), limitMm: +mm(R.limit), stressPct: Math.round((100 * R.sigma) / R.m.allow), maxKg: Math.round(R.maxKg) },
+  });
+}
+</script>
+</body>
+</html>

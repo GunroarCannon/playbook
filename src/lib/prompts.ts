@@ -49,7 +49,14 @@ Dials on this bench:
 ${describeParams(sim.params)}
 
 Current dial values: ${dials || "(defaults)"}
-
+${
+  sim.presets?.length
+    ? `
+Ready-made scenarios on this bench (buttons above the dials the person can click; you can mention them by name):
+${sim.presets.map((p) => `- "${p.label}": ${p.note}`).join("\n")}
+`
+    : ""
+}
 Other benches: ${ctx.others
     .filter((s) => s.id !== sim.id)
     .map((s) => `${s.id} (${s.name}: ${s.tagline})`)

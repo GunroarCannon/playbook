@@ -1,0 +1,143 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Break-even Bench — a small shop or stall, month by month.
+ * Each item sold earns (price - cost per item). Fixed costs every month: rent + staff x wage + other.
+ * Sales start at salesPerDay and grow growthPct a month as word spreads, up to double the start.
+ * Cumulative profit starts at minus the setup cost. Passes when it climbs back to zero by the target month.
+ */
+function simulate(p) {
+  const margin = +p.price - +p.unitCost;
+  const fixed = +p.rent + +p.staff * +p.wage + +p.otherMonthly;
+  const days = +p.daysOpen, g = +p.growthPct / 100;
+  const horizon = Math.max(+p.targetMonths, 12);
+  let cum = -+p.startup, be = null;
+  const months = [];
+  for (let m = 1; m <= Math.min(48, horizon + 6); m++) {
+    const perDay = +p.salesPerDay * Math.min(2, Math.pow(1 + g, m - 1));
+    const sales = perDay * days;
+    const profit = sales * margin - fixed;
+    cum += profit;
+    if (be == null && cum >= 0) be = m;
+    months.push({ m, perDay, sales, revenue: sales * +p.price, profit, cum });
+  }
+  const needPerDay = margin > 0 ? fixed / (margin * days) : Infinity;
+  const atTarget = months[Math.min(months.length, +p.targetMonths) - 1].cum;
+  return { margin, fixed, months, be, needPerDay, atTarget, ok: be != null && be <= +p.targetMonths };
+}
+
+const money = (v) => (v < 0 ? "−" : "") + Math.round(Math.abs(v)).toLocaleString();
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  const first = R.months[0];
+  Bench.metrics({
+    stressRatio: R.ok ? 0.3 + 0.65 * (R.be / Math.max(1, +p.targetMonths)) : R.margin <= 0 ? 2 : 1.2,
+    label: R.be ? `pays back in month ${R.be} · month 1 profit ${money(first.profit)}` : `not paid back in ${R.months.length} months · month 1 profit ${money(first.profit)}`,
+    values: { breakEvenMonth: R.be ?? -1, month1Profit: Math.round(first.profit), itemsPerDayToCoverCosts: Number.isFinite(R.needPerDay) ? Math.ceil(R.needPerDay) : -1 },
+  });
+}
+
+Bench.init({
+  params: { price: 1500, unitCost: 900, salesPerDay: 20, growthPct: 3, daysOpen: 26, rent: 50000, staff: 1, wage: 40000, otherMonthly: 30000, startup: 300000, targetMonths: 12 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: performance.now() / 1000, dur: 6, done: false, p: { ...p } }; },
+  draw(D, p, dt, now) {
+    if (!R) publish(p);
+    const { ctx, C } = D;
+    D.grid();
+    const W = D.W, H = D.H;
+    const prog = anim ? Math.min(1, (now - anim.t0) / anim.dur) : 1;
+    if (anim && !anim.done && prog >= 1) { anim.done = true; finish(anim.p); }
+    const n = R.months.length, upto = Math.max(1, Math.ceil(prog * n));
+    const cur = R.months[upto - 1];
+
+    D.text(`Sell at ${money(+p.price)}, costs ${money(+p.unitCost)} each → ${money(R.margin)} per item · ${p.salesPerDay} sold a day to start`, 18, 28, { size: 14 });
+    D.text(`fixed costs ${money(R.fixed)}/month · need ${Number.isFinite(R.needPerDay) ? Math.ceil(R.needPerDay) : "∞"} sales a day just to cover them · setup ${money(+p.startup)}`, 18, 48, { size: 12, mono: true, color: C.ink2 });
+
+    const side = 170;
+    const gx = 86, gw = Math.max(220, W - gx - side - 40), gy0 = 80, gh = Math.max(120, H - 160), gy = gy0 + gh;
+    const vals = R.months.map((m) => m.cum).concat(R.months.map((m) => m.profit), [0, -+p.startup]);
+    const lo = Math.min(...vals), hi = Math.max(...vals, 1);
+    const pad = (hi - lo) * 0.08 || 1;
+    const Y = (v) => gy - ((v - (lo - pad)) / (hi + pad - (lo - pad))) * gh;
+    const bw = gw / n, X = (m) => gx + (m - 0.5) * bw;
+    D.line(gx, gy0, gx, gy, { width: 1.3 });
+    D.line(gx, Y(0), gx + gw, Y(0), { width: 1.3 });
+    for (let k = 0; k <= 4; k++) { const v = lo - pad + ((hi + pad - (lo - pad)) * k) / 4; D.text(money(v), gx - 6, Y(v) + 4, { size: 10, mono: true, align: "right", color: C.ink3 }); }
+    const step = n > 24 ? 6 : n > 12 ? 3 : 1;
+    for (let m = step; m <= n; m += step) D.text(`${m}`, X(m), gy + 13, { size: 10, mono: true, align: "center", color: C.ink3 });
+    D.text("month", gx + gw, gy + 26, { size: 10, mono: true, align: "right", color: C.ink3 });
+    // target month
+    const tx = gx + +p.targetMonths * bw;
+    D.line(tx, gy0, tx, gy, { color: C.ink2, dash: [5, 4], width: 1.1, single: true });
+    D.text(`target: month ${p.targetMonths}`, tx + 4, gy0 + 10, { size: 10, color: C.ink2 });
+    // monthly profit bars
+    for (let i = 0; i < upto; i++) {
+      const m = R.months[i], y = Y(m.profit), y0 = Y(0);
+      ctx.fillStyle = m.profit >= 0 ? C.green : C.red; ctx.globalAlpha = 0.28;
+      ctx.fillRect(X(m.m) - bw * 0.3, Math.min(y, y0), bw * 0.6, Math.abs(y - y0)); ctx.globalAlpha = 1;
+    }
+    // cumulative line
+    ctx.strokeStyle = C.navy; ctx.lineWidth = 2.4; ctx.beginPath(); ctx.moveTo(gx, Y(-+p.startup));
+    for (let i = 0; i < upto; i++) ctx.lineTo(gx + R.months[i].m * bw, Y(R.months[i].cum));
+    ctx.stroke();
+    if (R.be && R.be <= upto) { D.circle(gx + R.be * bw, Y(R.months[R.be - 1].cum), 5, { color: C.green, fill: C.green }); D.text(`paid back: month ${R.be}`, gx + R.be * bw + 8, Y(R.months[R.be - 1].cum) - 8, { size: 12, color: C.green }); }
+    [["money in the pocket so far (after setup)", C.navy], ["profit each month", C.green]].forEach(([t, c], i) => {
+      D.line(gx + 10, gy + 40 + i * 15, gx + 28, gy + 40 + i * 15, { color: c, width: 3, single: true }); D.text(t, gx + 34, gy + 44 + i * 15, { size: 11 });
+    });
+
+    // ---- the stall
+    const sx = W - side - 16, sy = gy0 + 40, sw = side - 20;
+    for (let k = 0; k < 6; k++) D.rect(sx + (k * sw) / 6, sy, sw / 6, 18, { fill: k % 2 ? C.paper : C.red, fillAlpha: k % 2 ? 1 : 0.35, seed: 70 + k, rough: 0.6 });
+    D.line(sx + 4, sy + 18, sx + 4, sy + 100, { width: 2, seed: 77 }); D.line(sx + sw - 4, sy + 18, sx + sw - 4, sy + 100, { width: 2, seed: 78 });
+    D.rect(sx, sy + 60, sw, 40, { fill: C.paper, hatch: true, seed: 79 });
+    D.icon("basket-shopping", sx + sw / 2, sy + 44, 24, { color: C.ink2 });
+    D.person(sx + sw / 2, sy + 60, 40, { pose: "wave", t: now, seed: 80 });
+    // customers walk up: busier with more sales a day
+    const busy = Math.min(5, 1 + Math.floor((anim ? cur.perDay : +p.salesPerDay) / 25));
+    for (let k = 0; k < busy; k++) {
+      const ph = (now * 0.25 + k / busy) % 1;
+      const x = sx - 20 - (1 - ph) * 120;
+      if (x > 20) D.person(x, sy + 100, 36, { pose: ph > 0.9 ? "stand" : "walk", t: now + k, seed: 90 + k });
+    }
+    D.text(`month ${cur.m}: ${Math.round(cur.perDay)} sales a day`, sx + sw / 2, sy + 124, { size: 11, mono: true, align: "center", color: C.ink2 });
+    D.text(`profit ${money(cur.profit)}`, sx + sw / 2, sy + 140, { size: 12, mono: true, align: "center", color: cur.profit >= 0 ? C.green : C.red });
+
+    if (anim && anim.done) D.stamp(R.ok ? `PAID BACK IN ${R.be} MONTHS` : R.margin <= 0 ? "LOSES ON EVERY SALE" : "NOT PAID BACK", gx + gw / 2, gy0 + gh * 0.3, R.ok ? C.green : C.red);
+    if (!anim) D.text("(projection — press RUN TEST to watch the months go by)", 18, H - 12, { size: 11, color: C.ink3 });
+  },
+});
+
+function finish(p) {
+  const first = R.months[0];
+  const desc = `price ${money(+p.price)}, cost ${money(+p.unitCost)} per item, ${p.salesPerDay} sales a day growing ${p.growthPct}% a month, ${p.daysOpen} days open, fixed costs ${money(R.fixed)}/month, setup ${money(+p.startup)}`;
+  const stats = `${R.be ? `pays back the setup in month ${R.be}` : `has not paid back the setup after ${R.months.length} months`}; month 1 profit ${money(first.profit)}, ${money(R.atTarget)} in the pocket by month ${p.targetMonths}`;
+  const why = R.margin <= 0
+    ? `each item sells for less than it costs, so more sales only lose more money`
+    : first.profit < 0 && R.months[R.months.length - 1].profit < 0
+      ? `sales never cover the fixed costs: it needs ${Math.ceil(R.needPerDay)} sales a day just to break even each month`
+      : `profits are too small to win back the ${money(+p.startup)} setup by month ${p.targetMonths}`;
+  Bench.result({
+    passed: R.ok,
+    summary: `${desc}: ${stats}.`,
+    failureReason: R.ok ? undefined : why,
+    score: R.ok ? Math.round(R.atTarget) : undefined, scoreLabel: `in the pocket by month ${p.targetMonths}`,
+    metrics: { breakEvenMonth: R.be ?? -1, month1Profit: Math.round(first.profit), atTarget: Math.round(R.atTarget), salesPerDayToCoverCosts: Number.isFinite(R.needPerDay) ? Math.ceil(R.needPerDay) : -1 },
+  });
+}
+</script>
+</body>
+</html>
