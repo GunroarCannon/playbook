@@ -299,3 +299,24 @@ export function BenchIcon({ simId, size = 28, ...props }: P & { simId: string })
     (simId.startsWith("c-") ? MagicFlask : Flask);
   return <Icon size={size} {...props} />;
 }
+
+/** Walrus Memory's mascot, notebook style: facing right, tusks down, whiskers. */
+export function Walrus({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 120 100", props)}>
+      {/* body: tail flippers on the left, rising to the head on the right */}
+      <path d="M12 80 C6 62 20 44 42 40 C56 37 66 30 80 28 C98 26 108 38 106 52 C104 62 98 68 92 70 L88 86 C70 90 40 90 22 88 C16 87 13 84 12 80 Z" />
+      <path d="M12 80 L3 72 M12 80 L4 90" />
+      {/* front flipper */}
+      <path d="M62 86 C66 92 74 95 82 94 C78 90 76 87 75 85" />
+      {/* face: eye, whisker pads, tusks */}
+      <circle cx="88" cy="38" r="1.6" fill="currentColor" />
+      <ellipse cx="92" cy="54" rx="7" ry="5.5" />
+      <ellipse cx="103" cy="53" rx="6" ry="5" />
+      <path d="M90 59 L89 80 L94 60 M101 58 L101 78 L105 58" />
+      <path d="M88 52 h-0.2 M92 51 h-0.2 M96 52 h-0.2 M101 50 h-0.2 M105 51 h-0.2" strokeWidth="2.2" />
+      {/* belly crease */}
+      <path d="M40 70 C50 76 64 76 74 72" opacity="0.5" />
+    </svg>
+  );
+}

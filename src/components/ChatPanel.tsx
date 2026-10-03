@@ -92,7 +92,7 @@ export default function ChatPanel(props: Props) {
   const onlyGreeting = messages.length <= 1;
 
   return (
-    <section className="flex flex-col h-full min-h-0">
+    <section className="flex flex-col flex-1 min-h-0">
       <div ref={scroller} className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-4">
         {messages.map((m) => (
           <Message key={m.id} m={m} username={props.username} />
@@ -132,7 +132,7 @@ export default function ChatPanel(props: Props) {
             }
           }}
           rows={Math.min(5, Math.max(1, input.split("\n").length))}
-          placeholder={props.memoryOn ? "Tell Playbook what you're building, your limits, or ask “what if…”" : "Memory is off: I won't remember any of this"}
+          placeholder={props.memoryOn ? "What are you building? Or ask “what if…”" : "Memory is off: I won't remember this"}
           className="flex-1 resize-none bg-transparent outline-none text-[15px] px-2 py-1.5 placeholder:text-ink-3"
         />
         {busy ? (

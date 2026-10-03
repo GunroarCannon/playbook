@@ -99,6 +99,7 @@ Bench.init({
     ctx.fillStyle = fill >= 1 ? C.green : C.amber; ctx.globalAlpha = 0.35; ctx.fillRect(jx + 4, jy + jh - 4 - fh, jarW - 8, fh); ctx.globalAlpha = 1;
     const coins = Math.floor(fill * 18), rr = D.rng(5);
     for (let k = 0; k < coins; k++) D.circle(jx + 16 + (k % 4) * 26 + rr() * 6, jy + jh - 14 - Math.floor(k / 4) * ((jh - 20) / 5), 8, { seed: 90 + k, color: C.amber });
+    D.icon("graduation-cap", jx + jarW / 2, jy - 38, 30, { color: fill >= 1 ? C.green : C.ink3 });
     D.text(`${Math.round(fill * 100)}%`, jx + jarW / 2, jy + jh + 22, { size: 16, mono: true, align: "center" });
     D.text(`month ${cur.m}`, jx + jarW / 2, jy + jh + 40, { size: 11, mono: true, align: "center", color: C.ink2 });
 

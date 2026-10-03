@@ -61,11 +61,15 @@ export type CustomSim = {
   created_at: string;
 };
 
+/** Email list sign-ups (landing page and settings). */
+export type Subscriber = { email: string; source: string; user_id: string | null; created_at: string };
+
 type Tables = {
   users: User[];
   threads: Thread[];
   memlog: MemLog[];
   custom_sims: CustomSim[];
+  subscribers?: Subscriber[];
 };
 
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -124,6 +128,12 @@ function ensureSchema() {
     await sql`ALTER TABLE custom_sims ADD COLUMN IF NOT EXISTS prompt TEXT NOT NULL DEFAULT ''`;
     await sql`ALTER TABLE custom_sims ADD COLUMN IF NOT EXISTS code TEXT NOT NULL DEFAULT ''`;
     await sql`ALTER TABLE custom_sims ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 1`;
+    await sql`CREATE TABLE IF NOT EXISTS subscribers (
+      email TEXT PRIMARY KEY,
+      source TEXT NOT NULL,
+      user_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`;
     await sql`CREATE INDEX IF NOT EXISTS threads_user_idx ON threads(user_id, updated_at DESC)`;
     await sql`CREATE INDEX IF NOT EXISTS memlog_user_idx ON memlog(user_id, created_at DESC)`;
   })();
@@ -177,6 +187,22 @@ const now = () => new Date().toISOString();
 
 export const db = {
   backend: sql ? "postgres" : "file",
+
+  /** Returns false if the address was already on the list. */
+  async addSubscriber(email: string, source: string, userId: string | null): Promise<boolean> {
+    if (sql) {
+      await ensureSchema();
+      const rows = await sql`INSERT INTO subscribers (email, source, user_id) VALUES (${email}, ${source}, ${userId})
+        ON CONFLICT (email) DO NOTHING RETURNING email`;
+      return rows.length > 0;
+    }
+    return withFile((t) => {
+      t.subscribers ??= [];
+      if (t.subscribers.some((x) => x.email === email)) return false;
+      t.subscribers.push({ email, source, user_id: userId, created_at: now() });
+      return true;
+    }, true);
+  },
 
   async getUserByName(username: string): Promise<User | null> {
     if (sql) {

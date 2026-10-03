@@ -48,7 +48,7 @@ function publish(p) {
   });
 }
 
-// 200-person crowd: each dot gets a fixed "when would I be infected" rank so the crowd mirrors the curves.
+// 200-person crowd: each figure gets a fixed "when would I be infected" rank so the crowd mirrors the curves.
 const CROWD = 200;
 const order = (() => { const r = Bench.D.rng(99); return Array.from({ length: CROWD }, (_, i) => ({ i, k: r() })).sort((a, b) => a.k - b.k).map((o) => o.i); })();
 
@@ -70,7 +70,7 @@ Bench.init({
     D.text(`Outbreak · ${(+p.populationK).toLocaleString()}k people · R0 ${p.r0} · ${p.vaccinatedPct}% vaccinated${p.distancing !== "none" ? ` · ${p.distancing} distancing from day ${p.distancingDay}` : ""}`, 18, 28, { size: 14 });
     D.text(`day ${Math.round(cur.day)} · effective R at start ${R.rEff.toFixed(2)}`, 18, 48, { size: 12, mono: true, color: C.ink2 });
 
-    // ---- crowd of dots (right) ----
+    // ---- crowd of people (right) ----
     const cw = Math.min(220, W * 0.3), cols = 20, cell = cw / cols, cx0 = W - cw - 20, cy0 = 70;
     const inf = Math.round((cur.I / R.N) * CROWD), rec = Math.round(((cur.R) / R.N) * CROWD);
     const vacc = Math.round((+p.vaccinatedPct / 100) * CROWD);
@@ -82,15 +82,14 @@ Bench.init({
       if (j < vacc) { col = C.green; fill = true; }
       else if (j < rec) col = C.green;
       else if (j < rec + inf) { col = C.red; fill = true; }
-      ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 1.2;
-      ctx.beginPath(); ctx.arc(x, y, cell * 0.3, 0, Math.PI * 2); fill ? ctx.fill() : ctx.stroke();
+      D.icon("person", x, y, cell * 0.92, { color: col, alpha: fill ? 1 : 0.5 });
     }
     const ly = cy0 + (CROWD / cols) * cell + 16;
     [["healthy", C.blue, false], ["sick", C.red, true], ["recovered / vaccinated", C.green, false]].forEach(([t, c, f], i) => {
-      ctx.strokeStyle = c; ctx.fillStyle = c; ctx.beginPath(); ctx.arc(cx0 + 5, ly + i * 16 - 4, 4, 0, Math.PI * 2); f ? ctx.fill() : ctx.stroke();
+      D.icon("person", cx0 + 5, ly + i * 16 - 4, 11, { color: c, alpha: f ? 1 : 0.5 });
       D.text(t, cx0 + 14, ly + i * 16, { size: 11 });
     });
-    D.text("1 dot = " + Math.round(R.N / CROWD).toLocaleString() + " people", cx0, ly + 52, { size: 10, mono: true, color: C.ink3 });
+    D.text("1 figure = " + Math.round(R.N / CROWD).toLocaleString() + " people", cx0, ly + 52, { size: 10, mono: true, color: C.ink3 });
 
     // ---- curves (left) ----
     const gx = 60, gw = Math.max(200, cx0 - gx - 40), gyTop = 70, gh = Math.max(90, (H - 160) * 0.55), gy = gyTop + gh;
@@ -115,6 +114,7 @@ Bench.init({
     const maxH = Math.max(R.beds * 1.6, R.peakH * 1.1, 1);
     D.line(gx, hy + hh, gx + gw, hy + hh, { width: 1.3 }); D.line(gx, hy + hh, gx, hy, { width: 1.3 });
     D.text("hospital beds needed", gx - 6, hy - 4, { size: 10, color: C.ink3 });
+    D.icon("hospital", gx + gw - 12, hy + 2, 20, { color: C.ink3 });
     const bedY = hy + hh - (R.beds / maxH) * hh;
     ctx.beginPath(); ctx.moveTo(X(0), hy + hh);
     for (let i = 0; i <= upto; i++) ctx.lineTo(X(i), hy + hh - (R.series[i].H / maxH) * hh);

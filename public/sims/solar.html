@@ -140,8 +140,9 @@ Bench.init({
     D.text(`${ck.clock}`, bx + bw / 2, by + bh + 34, { size: 12, mono: true, align: "center", color: C.ink2 });
     // sun or moon
     const isDay = cur.h > 6 && cur.h < 18;
-    if (isDay) { D.circle(bx + bw / 2, by + bh + 62, 10, { color: C.amber, seed: 9 }); for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; D.line(bx + bw / 2 + Math.cos(a) * 14, by + bh + 62 + Math.sin(a) * 14, bx + bw / 2 + Math.cos(a) * 19, by + bh + 62 + Math.sin(a) * 19, { color: C.amber, single: true, width: 1.4 }); } }
-    else { ctx.strokeStyle = C.navy; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(bx + bw / 2, by + bh + 62, 10, 0.6, Math.PI * 2 - 0.6); ctx.arc(bx + bw / 2 + 6, by + bh + 62, 8, Math.PI * 2 - 0.9, 0.9, true); ctx.stroke(); }
+    D.icon(isDay ? "sun" : "moon", bx + bw / 2, by + bh + 64, 26, { color: isDay ? C.amber : C.navy });
+    D.icon("solar-panel", bx + bw + 34, by + 18, 30, { color: isDay ? C.amber : C.ink3 });
+    D.icon(cur.out ? "plug-circle-xmark" : "plug-circle-bolt", bx + bw + 34, by + bh - 14, 24, { color: cur.out ? C.red : C.ink2 });
 
     if (R.cutAt != null && (!anim || prog * (N - 1) >= R.series.findIndex((s) => s.out))) {
       const i = R.series.findIndex((s) => s.out);

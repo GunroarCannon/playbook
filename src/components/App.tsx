@@ -6,7 +6,10 @@ import type { SimResult } from "@/lib/protocol";
 import { buildSimDoc } from "@/lib/sim-doc";
 import { SIMS, defaultParams, getSim, registerCustomSims, sanitizeParams, type ParamValue, type SimDef } from "@/lib/sims";
 import ChatPanel, { type ChatApi, type ChatBody } from "./ChatPanel";
-import { Atom, BenchIcon, Compass, Flask, Gear, MagicFlask, SetSquare, SketchDefs } from "./Doodles";
+import { Atom, BenchIcon, Compass, Flask, Gear, MagicFlask, SetSquare, SketchDefs, Walrus } from "./Doodles";
+import EmailSignup from "./EmailSignup";
+import Icon from "./Icon";
+import type { UiIconName } from "./ui-icons";
 import { KindChip } from "./MessageParts";
 import Tour from "./Tour";
 import Workbench from "./Workbench";
@@ -64,11 +67,11 @@ const CUSTOM_SUGGESTIONS = [
   "Can you add another dial to this bench?",
 ];
 
-const BUILD_EXAMPLES = [
-  "Rainwater tank for my house: roof size, rainfall, tank size, daily use. Does it run dry in the dry season?",
-  "A generator for my shop: fuel tank, load in watts, hours of NEPA outage. When does it run out?",
-  "Baking bread: dough temperature, yeast amount, proving time. Does it rise enough?",
-  "A ramp for a wheelchair: height, length, push force. Is it too steep?",
+const BUILD_EXAMPLES: { icon: UiIconName; text: string }[] = [
+  { icon: "droplet", text: "Rainwater tank for my house: roof size, rainfall, tank size, daily use. Does it run dry in the dry season?" },
+  { icon: "plug-circle-bolt", text: "A generator for my shop: fuel tank, load in watts, hours of NEPA outage. When does it run out?" },
+  { icon: "bread-slice", text: "Baking bread: dough temperature, yeast amount, proving time. Does it rise enough?" },
+  { icon: "elevator", text: "Office lift vs stairs: 6 floors, 120 staff arriving at 9am, one lift. How long is the queue?" },
 ];
 
 function readLS(key: string, fallback: string) {
@@ -120,8 +123,9 @@ export default function App() {
   const [walrusCount, setWalrusCount] = useState<number | null>(null);
   const [picker, setPicker] = useState(false);
   const [loading, setLoading] = useState<string | null>("Opening your notebook…");
-  const [settings, setSettings] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [settings, setSettings] = useState<SettingsTab | null>(null);
+  const [toast, setToast] = useState<{ text: string; newSheet?: boolean } | null>(null);
+  const [amnesiaHidden, setAmnesiaHidden] = useState<string | null>(null);
   const [mobileTab, setMobileTab] = useState<"chat" | "bench">("chat");
   const [drawer, setDrawer] = useState(false);
   const [customSims, setCustomSims] = useState<SimDef[]>([]);
@@ -134,6 +138,7 @@ export default function App() {
   const repairs = useRef<Record<string, number>>({});
 
   const sim = getSim(simId) ?? SIMS[0];
+  const notify = (text: string, newSheet = false) => setToast({ text, newSheet });
 
   // ---------------------------------------------------------------- AI-built benches
   const storeCustom = useCallback((s: SimDef, code?: string, version?: number) => {
@@ -155,7 +160,7 @@ export default function App() {
   // Fetch the code of an AI-built bench the first time it's opened.
   useEffect(() => {
     if (!sim.custom || codes[sim.id]) return;
-    const t = setTimeout(() => loadCustom(sim.id).catch((e) => setToast(`Couldn't load that bench: ${e.message}`)), 0);
+    const t = setTimeout(() => loadCustom(sim.id).catch((e) => setToast({ text: `Couldn't load that bench: ${e.message}` })), 0);
     return () => clearTimeout(t);
   }, [sim, codes, loadCustom]);
 
@@ -168,7 +173,7 @@ export default function App() {
   async function repairSim(id: string, message: string) {
     const n = repairs.current[id] ?? 0;
     if (n >= 2) {
-      setToast(`This AI-built bench still has a problem (${message.slice(0, 90)}). Ask Playbook to fix it in the chat.`);
+      notify(`This AI-built bench still has a problem (${message.slice(0, 90)}). Ask Playbook to fix it in the chat.`);
       return;
     }
     repairs.current[id] = n + 1;
@@ -182,9 +187,9 @@ export default function App() {
       if (r.error) throw new Error(r.error);
       storeCustom(r.sim, r.code, r.version);
       setDials((d) => ({ ...defaultParams(r.sim.params), ...pickKnown(d, r.sim.params) }));
-      setToast("Fixed. The AI rewrote the bench after it crashed.");
+      notify("Fixed. The AI rewrote the bench after it crashed.");
     } catch (e) {
-      setToast(`The AI couldn't fix the bench: ${e instanceof Error ? e.message : e}`);
+      notify(`The AI couldn't fix the bench: ${e instanceof Error ? e.message : e}`);
     } finally {
       setSimBusy(null);
     }
@@ -198,7 +203,7 @@ export default function App() {
       setSimId(s.id);
       setMobileTab("bench");
     } catch (e) {
-      setToast(`Couldn't load the new bench: ${e instanceof Error ? e.message : e}`);
+      notify(`Couldn't load the new bench: ${e instanceof Error ? e.message : e}`);
     } finally {
       setSimBusy(null);
     }
@@ -308,7 +313,7 @@ export default function App() {
       setActive({ id: thread.id, messages: [boot.message] });
       refreshThreads();
     } catch (e) {
-      setToast(`Couldn't open a sheet: ${e instanceof Error ? e.message : e}`);
+      notify(`Couldn't open a sheet: ${e instanceof Error ? e.message : e}`);
     } finally {
       setLoading(null);
     }
@@ -380,16 +385,12 @@ export default function App() {
     const next = !memoryOn;
     setMemoryOn(next);
     writeLS("pb-memory", next ? "on" : "off");
-    setToast(
-      next
-        ? "Walrus Memory is ON. Open a new sheet to see it recall you."
-        : "Walrus Memory is OFF (amnesia mode). Open a new sheet to compare.",
-    );
+    notify(next ? "Walrus Memory is ON. Open a new sheet to see it recall you." : "Walrus Memory is OFF (amnesia mode). Open a new sheet to compare.", true);
   }
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 5000);
+    const t = setTimeout(() => setToast(null), 6000);
     return () => clearTimeout(t);
   }, [toast]);
 
@@ -397,40 +398,29 @@ export default function App() {
 
   // ---------------------------------------------------------------- render
   return (
-    <div className="graph-paper h-full flex flex-col">
+    <div className="graph-paper h-dvh w-full overflow-hidden flex flex-col">
       <SketchDefs />
-      {/* top bar */}
-      <header className="sheet border-b-[1.5px] border-ink flex items-center gap-3 px-3 h-14 shrink-0 relative z-20">
-        <button data-tour="menu" className="lg:hidden btn-ink px-2 py-0.5" onClick={() => setDrawer(!drawer)} aria-label="Menu">
-          ☰
+      {/* top bar: kept to the essentials so it fits a phone */}
+      <header className="sheet border-b-[1.5px] border-ink flex items-center gap-2 sm:gap-3 px-2 sm:px-3 h-14 shrink-0 relative z-20">
+        <button data-tour="menu" className="lg:hidden btn-ink w-9 h-8 flex items-center justify-center shrink-0" onClick={() => setDrawer(!drawer)} aria-label="Menu">
+          <Icon name="bars" />
         </button>
-        <div className="flex items-center gap-2">
-          <Gear size={28} className="text-navy wobble" />
-          <span className="hand text-2xl leading-none">Playbook</span>
-        </div>
-        <div className="hidden md:flex items-center gap-2 ml-3 pl-3 border-l border-ink/20">
-          <BenchIcon simId={sim.id} size={26} className="text-ink" />
-          <span className="hand text-[15px]">{sim.name}</span>
+        <button onClick={() => setSettings("about")} className="flex items-center gap-1.5 min-w-0 group" title="About Playbook and settings">
+          <Gear size={28} className="text-navy wobble shrink-0 transition-transform duration-500 group-hover:rotate-90" />
+          <span className="hand text-[22px] sm:text-2xl leading-none">Playbook</span>
+        </button>
+        <div className="hidden md:flex items-center gap-2 ml-2 pl-3 border-l border-ink/20 min-w-0">
+          <BenchIcon simId={sim.id} size={26} className="text-ink shrink-0" />
+          <span className="hand text-[15px] truncate">{sim.name}</span>
         </div>
         <div className="flex-1" />
-        {me && (
-          <span className="hidden xl:inline mono text-[11px] text-ink-3 border border-ink/20 rounded px-1.5 py-0.5" title="LLM and runtime">
-            {me.model}
-          </span>
-        )}
-        <button onClick={() => setTour(true)} className="hand text-[15px] w-7 h-7 rounded-full border-[1.5px] border-ink hover:bg-note shrink-0" title="How to use Playbook" aria-label="Show the walkthrough">
-          ?
+        <button onClick={() => setTour(true)} className="w-8 h-8 flex items-center justify-center rounded-full text-ink-2 hover:text-ink hover:bg-note shrink-0" title="How to use Playbook" aria-label="Show the walkthrough">
+          <Icon name="circle-question" size={20} />
         </button>
         <MemorySwitch on={memoryOn} onToggle={toggleMemory} mode={me?.memory.mode} />
-        <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="btn-ink px-2 py-0.5 text-[13px] hidden sm:block" title="Toggle blueprint mode">
-          {theme === "dark" ? "paper" : "blueprint"}
+        <button onClick={() => setSettings("about")} className="hidden sm:flex w-8 h-8 items-center justify-center rounded-full text-ink-2 hover:text-ink hover:bg-note shrink-0" title="Settings" aria-label="Settings">
+          <Icon name="gear" size={18} />
         </button>
-        {me && (
-          <button onClick={() => setSettings(true)} className="hand text-[15px] px-2 hover:underline decoration-dotted" title="Account & memory settings">
-            <span className="hidden sm:inline">{me.user.username} ▾</span>
-            <span className="sm:hidden">⚙</span>
-          </button>
-        )}
       </header>
 
       <div className="flex-1 min-h-0 flex relative">
@@ -511,6 +501,15 @@ export default function App() {
             ))}
           </div>
           <div className={`lg:w-[42%] lg:min-w-[340px] lg:max-w-[560px] min-h-0 flex-1 lg:flex-none lg:border-r-[1.5px] border-ink/70 ${mobileTab === "chat" ? "flex" : "hidden"} lg:flex flex-col`}>
+            {activeThread && !activeThread.memory_on && memoryOn && amnesiaHidden !== activeThread.id && (
+              <div className="mx-3 mt-2 flex items-center gap-2 px-2.5 py-1 ink-box-soft bg-note/70 text-[12.5px] text-ink-2 shrink-0">
+                <span className="flex-1">This sheet was started with memory off, so it won&rsquo;t recall you.</span>
+                <button onClick={() => setPicker(true)} className="hand underline decoration-dotted shrink-0">new sheet</button>
+                <button onClick={() => setAmnesiaHidden(activeThread.id)} className="p-1 text-ink-3 hover:text-ink shrink-0" aria-label="Dismiss">
+                  <Icon name="xmark" />
+                </button>
+              </div>
+            )}
             {active && me ? (
               <ChatPanel
                 key={active.id}
@@ -561,12 +560,6 @@ export default function App() {
         </main>
       </div>
 
-      {activeThread && !activeThread.memory_on && memoryOn && (
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 hand text-[13px] sheet ink-box-soft px-3 py-1">
-          This sheet was started in amnesia mode.
-        </div>
-      )}
-
       {picker && (
         <BenchPicker onPick={newSheet} onBuild={buildBench} custom={customSims} onClose={() => setPicker(false)} canClose={threads.length > 0} memoryOn={memoryOn} />
       )}
@@ -578,7 +571,20 @@ export default function App() {
           }}
         />
       )}
-      {settings && me && <Settings me={me} onClose={() => setSettings(false)} />}
+      {settings && me && (
+        <Settings
+          me={me}
+          tab={settings}
+          onTab={setSettings}
+          theme={theme}
+          onTheme={setTheme}
+          onTour={() => {
+            setSettings(null);
+            setTour(true);
+          }}
+          onClose={() => setSettings(null)}
+        />
+      )}
       {loading && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-paper/70 backdrop-blur-[1px]">
           <div className="sheet ink-box px-6 py-5 flex items-center gap-4">
@@ -587,11 +593,17 @@ export default function App() {
           </div>
         </div>
       )}
+      {/* toasts sit at the top on phones so they never cover the message box */}
       {toast && (
-        <div className="fixed bottom-4 right-4 z-50 sheet ink-box px-4 py-2 max-w-sm text-[14px] flex gap-3 items-center">
-          <span>{toast}</span>
-          <button className="btn-ink px-2 text-[13px] shrink-0" onClick={() => { setToast(null); setPicker(true); }}>
-            new sheet
+        <div className="fixed top-16 inset-x-3 sm:inset-x-auto sm:top-auto sm:bottom-4 sm:right-4 z-50 sheet ink-box pl-4 pr-2 py-2 sm:max-w-sm text-[14px] flex gap-2 items-center">
+          <span className="flex-1">{toast.text}</span>
+          {toast.newSheet && (
+            <button className="btn-ink px-2 text-[13px] shrink-0" onClick={() => { setToast(null); setPicker(true); }}>
+              new sheet
+            </button>
+          )}
+          <button onClick={() => setToast(null)} className="p-1 text-ink-3 hover:text-ink shrink-0" aria-label="Dismiss">
+            <Icon name="xmark" />
           </button>
         </div>
       )}
@@ -606,10 +618,12 @@ function MemorySwitch({ on, onToggle, mode }: { on: boolean; onToggle: () => voi
       onClick={onToggle}
       role="switch"
       aria-checked={on}
-      className="flex items-center gap-2 px-2 py-1 border-[1.5px] border-ink rounded-[4px] bg-sheet shadow-[2px_2px_0_var(--shadow)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
+      className="flex items-center gap-1.5 sm:gap-2 px-1.5 sm:px-2 py-1 border-[1.5px] border-ink rounded-[4px] bg-sheet shadow-[2px_2px_0_var(--shadow)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none shrink-0"
       title="Kill switch: turn Walrus Memory off to see how the bot behaves without it"
+      aria-label={`Walrus Memory ${on ? "on" : "off"}`}
     >
-      <svg viewBox="0 0 44 24" className="w-10 h-6 text-ink" aria-hidden>
+      <Walrus size={22} className={`hidden min-[400px]:block ${on ? "text-navy" : "text-ink-3"}`} />
+      <svg viewBox="0 0 44 24" className="w-9 sm:w-10 h-6 text-ink" aria-hidden>
         <g stroke="currentColor" fill="none" strokeLinecap="round">
           <rect x="2" y="15" width="40" height="7" rx="1.5" fill="url(#pb-hatch)" strokeWidth="1.3" />
           <path d="M8 15 V11 M34 15 V11" strokeWidth="1.5" />
@@ -620,7 +634,7 @@ function MemorySwitch({ on, onToggle, mode }: { on: boolean; onToggle: () => voi
         </g>
       </svg>
       <span className="flex flex-col items-start leading-none">
-        <span className="mono text-[9px] text-ink-3 tracking-widest">WALRUS MEMORY</span>
+        <span className="hidden sm:inline mono text-[9px] text-ink-3 tracking-widest">WALRUS MEMORY</span>
         <span className={`mono text-[12px] font-semibold ${on ? "text-green" : "text-red"}`}>
           {on ? "● ON" : "○ OFF"}
           {mode === "own" && on && <span className="text-ink-3 font-normal"> · own acct</span>}
@@ -734,8 +748,9 @@ function BenchPicker({
                 />
                 <div className="flex flex-wrap gap-1.5 mt-1.5 items-center">
                   {BUILD_EXAMPLES.map((ex) => (
-                    <button key={ex} onClick={() => setIdea(ex)} className="text-[12px] px-2 py-0.5 border border-dashed border-ink/40 rounded hover:border-ink hover:bg-sheet text-ink-2 text-left">
-                      {ex.split(":")[0]}
+                    <button key={ex.text} onClick={() => setIdea(ex.text)} className="text-[12px] px-2 py-0.5 border border-dashed border-ink/40 rounded hover:border-ink hover:bg-sheet text-ink-2 text-left flex items-center gap-1.5">
+                      <Icon name={ex.icon} className="text-navy" />
+                      {ex.text.split(":")[0]}
                     </button>
                   ))}
                   <div className="flex-1" />
@@ -765,7 +780,28 @@ function BenchPicker({
   );
 }
 
-function Settings({ me, onClose }: { me: Me; onClose: () => void }) {
+type SettingsTab = "about" | "account" | "look";
+
+const GITHUB_URL = "https://github.com/GunroarCannon/playbook";
+const X_HANDLE = "therealgunroar";
+
+function Settings({
+  me,
+  tab,
+  onTab,
+  theme,
+  onTheme,
+  onTour,
+  onClose,
+}: {
+  me: Me;
+  tab: SettingsTab;
+  onTab: (t: SettingsTab) => void;
+  theme: "light" | "dark";
+  onTheme: (t: "light" | "dark") => void;
+  onTour: () => void;
+  onClose: () => void;
+}) {
   const [accountId, setAccountId] = useState("");
   const [key, setKey] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -782,53 +818,141 @@ function Settings({ me, onClose }: { me: Me; onClose: () => void }) {
     if (r.error) setMsg(r.error);
     else location.reload();
   }
+  const tabs: [SettingsTab, string][] = [
+    ["about", "About"],
+    ["account", "Account & memory"],
+    ["look", "Look"],
+  ];
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/25 p-4" onClick={onClose}>
-      <div className="sheet ink-box w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-start justify-between mb-3">
-          <h2 className="hand text-2xl">{me.user.username}&rsquo;s notebook</h2>
-          <button onClick={onClose} className="hand text-ink-3 hover:text-ink text-lg">✕</button>
-        </div>
-        <dl className="text-[13px] grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 mb-4">
-          <dt className="text-ink-3">Memory account</dt>
-          <dd>{me.memory.mode === "own" ? "your own Walrus Memory account" : me.memory.mode === "shared" ? "Playbook's shared account" : "local mock (no MemWal keys set)"}</dd>
-          <dt className="text-ink-3">Namespace</dt>
-          <dd className="mono">{me.memory.namespace}</dd>
-          <dt className="text-ink-3">Model</dt>
-          <dd className="mono">{me.model}</dd>
-        </dl>
-        <h3 className="hand text-lg">Bring your own Walrus Memory</h3>
-        <p className="text-[13px] text-ink-2 mb-2">
-          Create an account at{" "}
-          <a href="https://memory.walrus.xyz" target="_blank" rel="noreferrer" className="underline text-blue">
-            memory.walrus.xyz
-          </a>{" "}
-          and paste the account ID and delegate key. New memories will go to your account (namespace <span className="mono">playbook</span>).
-        </p>
-        <div className="flex flex-col gap-2">
-          <input value={accountId} onChange={(e) => setAccountId(e.target.value)} placeholder="Account ID (0x…)" className="mono text-[13px] bg-transparent border-b-[1.5px] border-ink/50 outline-none py-1" />
-          <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="Delegate private key" className="mono text-[13px] bg-transparent border-b-[1.5px] border-ink/50 outline-none py-1" />
-        </div>
-        {msg && <p className="text-red text-[13px] mt-2">{msg}</p>}
-        <div className="flex gap-2 mt-4 flex-wrap">
-          <button disabled={busy || !accountId || !key} onClick={() => save()} className="btn-ink px-3 py-1">
-            {busy ? "checking…" : "Use my account"}
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/25 p-3 sm:p-4" onClick={onClose}>
+      <div className="sheet ink-box w-full max-w-md max-h-[90dvh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 pt-4">
+          <h2 className="hand text-2xl flex items-center gap-2">
+            <Gear size={26} className="text-navy wobble" /> Playbook
+          </h2>
+          <button onClick={onClose} className="p-1 text-ink-3 hover:text-ink" aria-label="Close">
+            <Icon name="xmark" size={18} />
           </button>
-          {me.memory.mode === "own" && (
-            <button disabled={busy} onClick={() => save(true)} className="btn-ink px-3 py-1">
-              Switch back to shared
+        </div>
+        <nav className="flex gap-4 px-5 mt-2 border-b border-dashed border-ink/30">
+          {tabs.map(([id, label]) => (
+            <button key={id} onClick={() => onTab(id)} className={`hand text-[15px] pb-1.5 -mb-px ${tab === id ? "border-b-[3px] border-navy" : "text-ink-3 hover:text-ink"}`}>
+              {label}
             </button>
+          ))}
+        </nav>
+
+        <div className="overflow-y-auto px-5 py-4 flex flex-col gap-4">
+          {tab === "about" && (
+            <>
+              <p className="text-[14px] text-ink-2">
+                A what-if workbench that remembers you. Talk an idea through, turn the dials, press the big red button, and Playbook keeps your limits,
+                best results and failures in Walrus Memory for next time.
+              </p>
+              <a href={`https://x.com/${X_HANDLE}`} target="_blank" rel="noreferrer" className="ink-box-soft bg-note/60 p-3 flex items-center gap-3 hover:bg-note group">
+                <span className="w-10 h-10 rounded-full bg-ink text-sheet flex items-center justify-center shrink-0">
+                  <Icon name="x-twitter" size={18} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[12px] text-ink-3">Built by</span>
+                  <span className="hand text-[18px] group-hover:underline">@{X_HANDLE}</span>
+                </span>
+                <span className="ml-auto text-[13px] text-ink-3 hidden min-[380px]:inline">follow along →</span>
+              </a>
+              <section>
+                <h3 className="hand text-lg mb-1">Join the email list</h3>
+                <EmailSignup source="settings" />
+              </section>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[13px]">
+                <a href="/welcome" className="underline decoration-dotted text-navy">
+                  What is Playbook?
+                </a>
+                <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="underline decoration-dotted text-navy inline-flex items-center gap-1">
+                  <Icon name="github" /> Source on GitHub
+                </a>
+                <button onClick={onTour} className="underline decoration-dotted text-navy">
+                  Replay the walkthrough
+                </button>
+              </div>
+              <p className="text-[11.5px] text-ink-3">
+                Icons by{" "}
+                <a href="https://fontawesome.com" target="_blank" rel="noreferrer" className="underline">
+                  Font Awesome Free
+                </a>{" "}
+                (CC BY 4.0). Built for Walrus Session 8, &ldquo;Chatbots That Remember&rdquo;.
+              </p>
+            </>
           )}
-          <div className="flex-1" />
-          <button
-            onClick={async () => {
-              await fetch("/api/auth/logout", { method: "POST" });
-              location.reload();
-            }}
-            className="btn-ink px-3 py-1 text-red"
-          >
-            Sign out
-          </button>
+
+          {tab === "account" && (
+            <>
+              <dl className="text-[13px] grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+                <dt className="text-ink-3">Signed in as</dt>
+                <dd className="hand text-[15px]">{me.user.username}</dd>
+                <dt className="text-ink-3">Memory account</dt>
+                <dd>{me.memory.mode === "own" ? "your own Walrus Memory account" : me.memory.mode === "shared" ? "Playbook's shared account" : "local mock (no MemWal keys set)"}</dd>
+                <dt className="text-ink-3">Namespace</dt>
+                <dd className="mono break-all">{me.memory.namespace}</dd>
+                <dt className="text-ink-3">Model</dt>
+                <dd className="mono break-all">{me.model}</dd>
+              </dl>
+              <section>
+                <h3 className="hand text-lg">Bring your own Walrus Memory</h3>
+                <p className="text-[13px] text-ink-2 mb-2">
+                  Create an account at{" "}
+                  <a href="https://memory.walrus.xyz" target="_blank" rel="noreferrer" className="underline text-blue">
+                    memory.walrus.xyz
+                  </a>{" "}
+                  and paste the account ID and delegate key. New memories will go to your account (namespace <span className="mono">playbook</span>).
+                </p>
+                <div className="flex flex-col gap-2">
+                  <input value={accountId} onChange={(e) => setAccountId(e.target.value)} placeholder="Account ID (0x…)" className="mono text-[13px] bg-transparent border-b-[1.5px] border-ink/50 outline-none py-1" />
+                  <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="Delegate private key" className="mono text-[13px] bg-transparent border-b-[1.5px] border-ink/50 outline-none py-1" />
+                </div>
+                {msg && <p className="text-red text-[13px] mt-2">{msg}</p>}
+                <div className="flex gap-2 mt-3 flex-wrap">
+                  <button disabled={busy || !accountId || !key} onClick={() => save()} className="btn-ink px-3 py-1">
+                    {busy ? "checking…" : "Use my account"}
+                  </button>
+                  {me.memory.mode === "own" && (
+                    <button disabled={busy} onClick={() => save(true)} className="btn-ink px-3 py-1">
+                      Switch back to shared
+                    </button>
+                  )}
+                </div>
+              </section>
+              <button
+                onClick={async () => {
+                  await fetch("/api/auth/logout", { method: "POST" });
+                  location.reload();
+                }}
+                className="btn-ink px-3 py-1 text-red self-start flex items-center gap-2"
+              >
+                <Icon name="right-from-bracket" /> Sign out
+              </button>
+            </>
+          )}
+
+          {tab === "look" && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                {(["light", "dark"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => onTheme(t)}
+                    className={`ink-box-soft p-3 text-left flex flex-col gap-1 ${theme === t ? "outline-[2.5px] outline-navy outline-offset-2" : ""}`}
+                    style={{ background: t === "light" ? "#fbfaf6" : "#161d28", color: t === "light" ? "#1d1f24" : "#e6edf3" }}
+                  >
+                    <Icon name={t === "light" ? "sun" : "moon"} size={18} />
+                    <span className="hand text-[16px]">{t === "light" ? "Graph paper" : "Blueprint"}</span>
+                  </button>
+                ))}
+              </div>
+              <button onClick={onTour} className="btn-ink px-3 py-1 self-start flex items-center gap-2">
+                <Icon name="hand-pointer" /> Replay the walkthrough
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

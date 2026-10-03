@@ -27,8 +27,9 @@ const STEPS: Step[] = [
 type Rect = { x: number; y: number; w: number; h: number };
 type Pt = { x: number; y: number };
 
-const CARD_W = 300;
-const GAP = 124;
+// Card width and arrow length shrink on phones so the card always fits beside (or over) its target.
+const cardWidth = () => Math.min(300, window.innerWidth - 24);
+const gapFor = () => (window.innerWidth < 640 ? 70 : 124);
 
 function visibleRect(target: string): Rect | null {
   const el = document.querySelector(`[data-tour="${target}"]`);
@@ -43,6 +44,7 @@ function visibleRect(target: string): Rect | null {
 /** Where to put the card, and the two ends of the arrow. */
 function layout(t: Rect, cardH: number) {
   const vw = window.innerWidth, vh = window.innerHeight;
+  const CARD_W = cardWidth(), GAP = gapFor();
   const clampX = (x: number) => Math.max(12, Math.min(vw - CARD_W - 12, x));
   const clampY = (y: number) => Math.max(12, Math.min(vh - cardH - 12, y));
   const cx = t.x + t.w / 2, cy = t.y + t.h / 2;
@@ -184,7 +186,7 @@ export default function Tour({ onClose }: { onClose: () => void }) {
         ref={cardRef}
         key={`card-${i}`}
         className="absolute sheet ink-box p-4 pb-3 pb-tour-card"
-        style={{ left: card.x, top: card.y, width: CARD_W }}
+        style={{ left: card.x, top: card.y, width: cardWidth(), maxHeight: window.innerHeight - 24, overflowY: "auto" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-baseline justify-between gap-2">

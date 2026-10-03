@@ -1,6 +1,7 @@
 import "server-only";
 import { Script } from "node:vm";
 import { generateText } from "ai";
+import { iconHint } from "./icons";
 import { CODEGEN_MODEL_ID, chatModel } from "./llm";
 import { smokeRun } from "./sim-check";
 import type { ParamSpec, SimDef } from "./sims";
@@ -72,6 +73,8 @@ Bench.init({
     const minY = ty + th * (1 - +p.minPct / 100);
     D.line(tx - 10, minY, tx + tw + 10, minY, { color: C.red, dash: [5, 4], single: true });
     D.text(Math.round(lvl * 100) + "%", tx + tw / 2, ty - 10, { size: 16, align: "center", mono: true });
+    D.icon("cloud-rain", tx + tw + 25, ty + 14, 24, { color: +p.inflowLpm > 0 ? C.blue : C.ink3 });
+    D.person(tx + tw + 25, ty + th, 44, { pose: run && u < 1 ? "walk" : "stand", t, label: "use" });
 
     const gx = tx + tw + 50, gw = W - gx - 30;
     D.line(gx, ty + th, gx + gw, ty + th);
@@ -127,6 +130,11 @@ Drawing kit: D.W, D.H (canvas px), D.C colors {ink, ink2, ink3, navy, red, blue,
 D.grid(), D.line(x1,y1,x2,y2,{color,width,dash,single}), D.rect(x,y,w,h,{fill,hatch,color}), D.circle(cx,cy,r,{fill,color}),
 D.text(str,x,y,{size,color,align:"left"|"center"|"right",mono}), D.dim(x1,y1,x2,y2,label), D.stamp(text,x,y,color), D.ground(x1,x2,y),
 D.lerp(a,b,u), D.clamp(v,lo,hi), D.ease(u), D.rng(seed) returns a function giving 0..1 (use it instead of Math.random for anything simulated).
+Sprites (use them like game assets: draw the real objects of the problem and move them during a test, instead of plain boxes):
+- D.icon(name, x, y, size, {color, flip, rotate, label, anchor:"bottom"}): an object from the icon pack, x,y = centre (or bottom-centre), size = height px.
+  Only use names from the icon list given with the request. An unknown name just draws a labelled circle.
+- D.person(x, y, h, {pose:"stand"|"walk"|"run"|"wave"|"sit"|"carry"|"lie"|"fall", t, facing:1|-1, label}): a stick figure standing at x,y. Use it for every human.
+- D.token(label, x, y, size): a labelled circle for anything with no fitting icon.
 Fit everything to D.W x D.H, keep text >= 11px, and keep the code under 220 lines. Use real, simple physics or maths. Name it in the brief.
 
 ## Complete example
@@ -231,13 +239,15 @@ function userPrompt(input: GenInput) {
   if (input.mode === "create") {
     return (
       `Build a bench for this request:\n"""${input.request.slice(0, 1200)}"""\n` +
-      (input.context ? `\nWhat we know about the person (use it for sensible defaults and targets):\n${input.context.slice(0, 1200)}\n` : "")
+      (input.context ? `\nWhat we know about the person (use it for sensible defaults and targets):\n${input.context.slice(0, 1200)}\n` : "") +
+      `\n${iconHint(input.request)}`
     );
   }
   const current = "```json\n" + JSON.stringify(input.base.spec, null, 1) + "\n```\n```js\n" + input.base.code + "\n```";
+  const icons = iconHint(`${input.base.spec.name} ${input.base.spec.keywords.join(" ")} ${input.change ?? ""}`);
   if (input.mode === "repair")
-    return `This bench crashed or misbehaved:\n${input.error}\n\nCurrent bench:\n${current}\n\nFix the problem. Keep the same idea and dial keys unless a dial is the cause. Reply with the full corrected json and js blocks.`;
-  return `Change this bench as requested: "${(input.change ?? "").slice(0, 800)}"\n\nCurrent bench:\n${current}\n\nReply with the full updated json and js blocks.`;
+    return `This bench crashed or misbehaved:\n${input.error}\n\nCurrent bench:\n${current}\n\nFix the problem. Keep the same idea and dial keys unless a dial is the cause. Reply with the full corrected json and js blocks.\n${icons}`;
+  return `Change this bench as requested: "${(input.change ?? "").slice(0, 800)}"\n\nCurrent bench:\n${current}\n\nReply with the full updated json and js blocks.\n${icons}`;
 }
 
 /**

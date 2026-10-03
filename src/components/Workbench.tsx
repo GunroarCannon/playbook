@@ -106,7 +106,7 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKe
   return (
     <section className="flex flex-col h-full min-h-0">
       {/* drawing sheet */}
-      <div data-tour="bench" className="relative flex-1 min-h-[220px] m-3 mb-2 ink-box overflow-hidden bg-sheet">
+      <div data-tour="bench" className="relative flex-1 min-h-[200px] m-2 sm:m-3 mb-2 ink-box overflow-hidden bg-sheet">
         <iframe
           ref={frame}
           key={sim.id + (srcDoc ? ":custom" : "")}
@@ -127,14 +127,14 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKe
             <span className="hand text-[18px] pulse">{busyNote}</span>
           </div>
         )}
-        <div className="absolute top-2 right-2 hand text-[12px] px-2 py-0.5 sheet ink-box-soft text-ink-2">
+        <div className="hidden sm:block absolute top-2 right-2 hand text-[12px] px-2 py-0.5 sheet ink-box-soft text-ink-2">
           {sim.custom && <span className="text-navy">✦ AI-built · </span>}
           {sim.name}
         </div>
       </div>
 
       {/* tactile control deck */}
-      <div data-tour="controls" className="mx-3 mb-3 sheet ink-box flex max-h-[46%] min-h-[150px]">
+      <div data-tour="controls" className="mx-2 sm:mx-3 mb-2 sm:mb-3 sheet ink-box flex max-h-[46%] min-h-[150px]">
         <div className="flex-1 min-w-0 overflow-y-auto px-3 pt-2 pb-3">
           <div className="flex items-center justify-between mb-1">
             <span className="hand text-[15px]">Control panel</span>
@@ -150,14 +150,14 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, flashKe
                 ))}
               </div>
             )}
-            <div className="flex flex-wrap gap-x-5 gap-y-3 flex-1 min-w-[240px]">
+            <div className="flex flex-wrap gap-x-5 gap-y-3 flex-1 min-w-[190px]">
               {others.map((p) => (
                 <Control key={p.key} spec={p} value={dials[p.key] ?? p.default} onChange={(v) => onDial(p.key, v)} flash={flashKeys.includes(p.key)} />
               ))}
             </div>
           </div>
         </div>
-        <div data-tour="run" className="w-[150px] shrink-0 border-l border-dashed border-ink/30 flex flex-col items-center justify-center gap-2 py-2">
+        <div data-tour="run" className="w-[112px] sm:w-[150px] shrink-0 border-l border-dashed border-ink/30 flex flex-col items-center justify-center gap-2 py-2">
           <StressGauge ratio={metrics?.stressRatio ?? 0} label={metrics?.label} />
           <RunButton
             running={testing}

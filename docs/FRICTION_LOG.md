@@ -61,3 +61,6 @@ On Groq's free tier, `qwen/qwen3.8-27b` gets about 8,000 tokens per minute, 1,00
 
 ### 13. Recalled memory makes every tool step more expensive
 Every tool step re-sends the system prompt with the recalled memories. With up to 5 steps per turn, one message can use 10k+ input tokens, which matters on rate-limited tiers. Recalling once per turn (not per step) and keeping memories as short tagged sentences keeps this down.
+
+### 14. Groq now rejects a bench build outright on the free tier
+On 2026-10-03 a bench build failed six times in a row with `Request too large for model qwen/qwen3.8-27b ... on output tokens per minute (OTPM): Limit 1000, Requested 1161`. Earlier the same call was only slowed down by rate limits. Groq now refuses the request up front when its expected output is over the per-minute cap, so on the free tier AI-built benches can't be generated at all. Lowering `maxOutputTokens` below 1,000 isn't an option, because a bench is about 2,500 output tokens. Fix: Groq's Dev tier, or another non-OpenAI open-weights provider for code generation.

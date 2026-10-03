@@ -121,7 +121,7 @@ Bench.init({
     for (let i = 0; i < R.lanes; i++) {
       const x = x0 + i * laneGap;
       D.rect(x - 28, top, 56, 26, { hatch: true, seed: 300 + i });
-      D.rect(x - 9, top - 13, 18, 13, { seed: 400 + i }); // till
+      D.icon("cash-register", x + 18, top, 18, { anchor: "bottom", color: C.ink2 }); // till
       D.text(R.express && i === 0 ? "EXPRESS" : `TILL ${i + 1}`, x, top + 42, { size: 11, align: "center", mono: true, color: R.express && i === 0 ? C.blue : C.ink2 });
       figure(D, x, top - 22, C.navy, 0.8);
       // rope barrier guiding the line

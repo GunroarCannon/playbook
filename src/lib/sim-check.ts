@@ -44,6 +44,8 @@ var Bench = {
     W: 820, H: 480, ctx: __any, rng: __rng, hash: function () { return 1; },
     C: { ink: "#000", ink2: "#333", ink3: "#888", navy: "#228", red: "#d33", blue: "#06c", amber: "#c80", green: "#282", paper: "#fff", fill: "#eee", minor: "#eee", major: "#ddd" },
     grid: __noop, line: __noop, rect: __noop, circle: __noop, hatch: __noop, text: __noop, dim: __noop, stamp: __noop, ground: __noop,
+    icon: function (_n, _x, _y, s) { return { w: s || 32, h: s || 32 }; }, token: function (_n, _x, _y, s) { return { w: s || 32, h: s || 32 }; },
+    person: __noop, hasIcon: function () { return true; },
     lerp: function (a, b, t) { return a + (b - a) * t; },
     clamp: function (v, lo, hi) { return Math.min(hi, Math.max(lo, v)); },
     ease: function (t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }

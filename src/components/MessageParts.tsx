@@ -36,7 +36,7 @@ export function Markdown({ text }: { text: string }) {
 
 /** Opening card of a sheet: what Walrus Memory gave us (or amnesia mode). */
 export function BootstrapCard({ data }: { data: { memoryOn: boolean; ms?: number; memories: MemItem[]; preset: { sentence: string } | null; errors?: string[] } }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   if (!data.memoryOn)
     return (
       <div className="ink-box-soft border-dashed bg-sheet-2 px-3 py-2 mb-2 flex items-center gap-3">

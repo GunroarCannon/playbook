@@ -274,3 +274,58 @@ body {
   padding: 0 0.25rem;
   border-radius: 3px;
 }
+
+/* ------------------------------------------------------------------
+   Landing page: things drop into place as they scroll into view
+   (only once JS has set data-anim, so the page still reads without it)
+------------------------------------------------------------------- */
+[data-anim] .fall {
+  opacity: 0;
+  transform: translateY(-46px) rotate(var(--tilt, -5deg));
+  transition:
+    opacity 0.45s ease var(--d, 0ms),
+    transform 0.85s cubic-bezier(0.22, 1.45, 0.42, 1) var(--d, 0ms);
+}
+[data-anim] .fall.is-in {
+  opacity: 1;
+  transform: none;
+}
+[data-anim] .draw-in {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset 1.4s ease-out var(--d, 200ms);
+}
+[data-anim] .draw-in.is-in {
+  stroke-dashoffset: 0;
+}
+[data-anim] .draw-bar {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  transform: scaleY(0);
+  transition: transform 0.8s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+[data-anim] .is-in .draw-bar {
+  transform: none;
+}
+/* section dots on the scroll arrow */
+.pb-node {
+  fill: var(--sheet);
+  stroke: var(--ink-3);
+  transition:
+    fill 0.3s,
+    stroke 0.3s;
+}
+.pb-node.is-lit {
+  fill: var(--navy);
+  stroke: var(--navy);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-anim] .fall,
+  [data-anim] .draw-in,
+  [data-anim] .draw-bar {
+    opacity: 1;
+    transform: none;
+    stroke-dashoffset: 0;
+    transition: none;
+  }
+}

@@ -65,7 +65,23 @@ How it stays reliable with a 27B open model (`src/lib/sim-gen.ts`, `src/lib/sim-
 4. **Physics review.** A second short model call hand-checks the sim's own result for its default settings. It caught a shelf bench reporting 23 mm of sag where the beam formula gives about 2.3 mm (a unit bug), so that bench gets rewritten.
 5. **Repair loop.** If a bench still crashes in the browser (`SIM_ERROR`, or no result within 25 s), the error goes back to the model, which fixes its own code, at most twice. In the chat, `revise_bench` changes a bench on request.
 
+### Sprites: icons as game assets
+
+Benches draw real objects instead of boxes. The drawing kit (`public/sims/bench.js`) has three sprite helpers:
+
+- `D.icon(name, x, y, size, {color, flip, rotate, label})` draws one of ~900 icons from `public/sims/icons.js`: a "physical world" subset of [Font Awesome Free](https://fontawesome.com) (people, animals, vehicles, buildings, food, energy, weather, tools, money, medical…) plus hand-drawn extras Font Awesome doesn't have (elephant, popsicle stick, walrus). The pack loads lazily the first time a sim draws an icon.
+- `D.person(x, y, h, {pose})` draws a stick figure: stand, walk, run, wave, sit, carry, lie, fall.
+- `D.token(label, x, y, size)` draws a labelled circle for anything with no icon. An unknown icon name falls back to a token, so a typo never crashes a sim.
+
+The AI never sees all 900 names. `src/lib/icons.ts` searches an icon map (names, labels, Font Awesome's search terms and our aliases such as `coffee → mug-hot`, `lift → elevator`) for the words in the request and puts the ~20 best matches in the prompt. The full map is in [docs/ICONS.md](docs/ICONS.md). Regenerate everything with `node scripts/build-icons.mjs`.
+
+On a phone, every sim is laid out at 500 px wide and scaled down, so labels shrink instead of colliding.
+
 Generated code only ever runs in the sandboxed iframe (opaque origin, no cookies) behind a CSP that blocks network access. Each bench belongs to one person. Building one is saved to Walrus Memory as a `[SIM]` memory, so the bot remembers what you built.
+
+## Landing page and email list
+
+Signed-out visitors get a landing page (`src/components/Landing.tsx`, also at `/welcome`) explaining the app, Walrus Memory and the use cases. A dotted arrow follows your scroll through the sections and the diagrams drop into place as they come into view. The email sign-up (landing page and the About tab in settings) stores addresses in the `subscribers` table via `POST /api/subscribe`. Click the Playbook logo in the app for About, account and theme settings.
 
 ## Run it locally
 
@@ -118,14 +134,17 @@ src/lib/llm.ts           Provider switch (Groq / OpenRouter / OpenAI-compatible)
 src/lib/sim-gen.ts       AI-built benches: prompt contract, parsing, physics review, retry loop
 src/lib/sim-check.ts     Headless smoke run of generated sims in an isolated vm
 src/lib/sim-doc.ts       Wraps generated code in a CSP-locked document for the sandboxed iframe
+src/lib/icons.ts         Icon map search: which sprites fit a bench request
+scripts/build-icons.mjs  Builds the sprite pack, icon map and UI icons from Font Awesome Free
 src/app/api/chat         Streaming chat: recall → model + tools (set_dials, remember, recall, switch_bench, build_bench, revise_bench)
 src/app/api/sims         Build / fetch / repair AI-built benches
 src/app/api/bootstrap    New sheet: recall, restore dials, welcome-back
 src/app/api/memories     Bench results → memory; memory ledger
-public/sims/*.html       Hand-built simulations + bench.js drawing kit
+public/sims/*.html       Hand-built simulations + bench.js drawing kit + icons.js sprite pack
+src/components/Landing.tsx  Public landing page
 docs/FRICTION_LOG.md     Bugs and friction found while integrating Walrus Memory with an open model
 ```
 
 ## License
 
-MIT
+MIT. Icons: [Font Awesome Free](https://fontawesome.com) by Fonticons, Inc., licensed [CC BY 4.0](https://fontawesome.com/license/free) (the elephant, popsicle stick and walrus sprites are our own).

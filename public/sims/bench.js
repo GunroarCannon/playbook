@@ -24,11 +24,16 @@
   const ctx = canvas.getContext("2d");
   let W = 0, H = 0, DPR = 1;
 
+  // Sims are laid out for at least MIN_W px. On a phone the drawing is laid out at MIN_W and scaled down,
+  // so labels shrink instead of running into each other.
+  const MIN_W = 500;
   function resize() {
     DPR = Math.min(2, window.devicePixelRatio || 1);
-    W = canvas.clientWidth; H = canvas.clientHeight;
-    canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const cw = canvas.clientWidth, ch = canvas.clientHeight;
+    const k = cw > 0 && cw < MIN_W ? cw / MIN_W : 1;
+    W = cw / k; H = ch / k;
+    canvas.width = Math.round(cw * DPR); canvas.height = Math.round(ch * DPR);
+    ctx.setTransform(DPR * k, 0, 0, DPR * k, 0, 0);
   }
   new ResizeObserver(resize).observe(canvas);
   resize();
@@ -170,10 +175,129 @@
       ctx.stroke(); ctx.globalAlpha = 1;
     },
 
+    /**
+     * Draw an icon from the pack (icons.js: Font Awesome Free + hand-drawn extras) like a game sprite.
+     * x, y = centre (or bottom-centre with anchor:"bottom"); size = height in px.
+     * o: { color, alpha, rotate (radians), flip (mirror left-right), outline, label, anchor }
+     * Unknown names never crash: they become a labelled token. Returns the drawn width and height.
+     */
+    icon(name, x, y, size = 32, o = {}) {
+      const data = iconData(name);
+      if (!data) {
+        if (!window.PB_ICONS) { loadIcons(); D.token("", x, o.anchor === "bottom" ? y - size / 2 : y, size, { color: C.ink3, caption: false }); return { w: size, h: size }; }
+        return D.token(String(name), x, o.anchor === "bottom" ? y - size / 2 : y, size, o);
+      }
+      const [w, h, d] = data;
+      const s = size / h;
+      const cy = o.anchor === "bottom" ? y - size / 2 : y;
+      ctx.save();
+      ctx.translate(x, cy);
+      if (o.rotate) ctx.rotate(o.rotate);
+      ctx.scale(o.flip ? -s : s, s);
+      ctx.translate(-w / 2, -h / 2);
+      ctx.globalAlpha = o.alpha ?? 1;
+      ctx.fillStyle = o.color || C.ink;
+      ctx.strokeStyle = o.color || C.ink;
+      ctx.lineWidth = 1.6 / s; ctx.lineJoin = "round";
+      for (const p of iconPaths(name, d)) {
+        if (o.outline) { ctx.globalAlpha = (o.alpha ?? 1) * 0.15; ctx.fill(p); ctx.globalAlpha = o.alpha ?? 1; ctx.stroke(p); }
+        else ctx.fill(p);
+      }
+      ctx.restore();
+      if (o.label) D.text(o.label, x, cy + size / 2 + 13, { size: 11, align: "center", color: o.color || C.ink2 });
+      return { w: w * s, h: size };
+    },
+
+    /** Is this icon in the pack? (false until icons.js has loaded) */
+    hasIcon: (name) => !!iconData(name),
+
+    /**
+     * Stick figure standing on (x, y) (feet), h px tall.
+     * o: { pose: "stand"|"walk"|"run"|"wave"|"sit"|"carry"|"lie"|"fall", t (seconds: animates walk/run/wave; for "fall" 0..1 = how far over),
+     *      facing: 1 | -1, color, label, seed }
+     */
+    person(x, y, h = 40, o = {}) {
+      const col = o.color || C.ink, f = o.facing === -1 ? -1 : 1, t = o.t ?? 0, pose = o.pose || "stand";
+      const seed = o.seed ?? 7;
+      const L = (x1, y1, x2, y2, k) => D.line(x1, y1, x2, y2, { color: col, width: Math.max(1.4, h / 26), single: true, rough: 0.5, seed: seed + k });
+      if (pose === "lie" || pose === "fall") {
+        // lying flat (or tipping over, rotated by how far into the fall)
+        const a = pose === "fall" ? D.clamp(t, 0, 1) * Math.PI / 2 : Math.PI / 2;
+        ctx.save(); ctx.translate(x, y); ctx.rotate(f * a); D.person(0, 0, h, { ...o, pose: "stand", label: undefined }); ctx.restore();
+        if (o.label) D.text(o.label, x, y + 14, { size: 11, align: "center", color: o.color || C.ink2 });
+        return;
+      }
+      const r = h * 0.12, hip = y - h * 0.45, neck = y - h * 0.78;
+      const sitting = pose === "sit";
+      const hipY = sitting ? y - h * 0.28 : hip, neckY = sitting ? hipY - h * 0.33 : neck;
+      D.circle(x, neckY - r, r, { color: col, width: Math.max(1.4, h / 26), seed: seed + 9 });
+      L(x, neckY, x, hipY, 1);
+      // legs
+      // standing figures keep a slight A-stance so both legs and arms show
+      const swing = pose === "walk" ? Math.sin(t * 7) * 0.45 : pose === "run" ? Math.sin(t * 12) * 0.8 : 0.22;
+      const leg = h * 0.45;
+      if (sitting) {
+        L(x, hipY, x + f * h * 0.25, hipY, 2); L(x + f * h * 0.25, hipY, x + f * h * 0.25, y, 3);
+      } else {
+        L(x, hipY, x + Math.sin(swing) * leg, hipY + Math.cos(swing) * leg, 2);
+        L(x, hipY, x - Math.sin(swing) * leg, hipY + Math.cos(swing) * leg, 3);
+      }
+      // arms
+      const sh = neckY + h * 0.06, arm = h * 0.32;
+      if (pose === "wave") {
+        const wob = Math.sin(t * 8) * arm * 0.25;
+        L(x, sh, x + f * (arm * 0.55 + wob), sh - arm * 0.8, 4);
+        L(x, sh, x - f * arm * 0.5, sh + arm * 0.85, 5);
+      } else if (pose === "carry") {
+        L(x, sh, x + f * arm * 0.8, sh + arm * 0.35, 4); L(x, sh, x + f * arm * 0.7, sh + arm * 0.5, 5);
+      } else {
+        const a = pose === "run" ? -swing * 1.2 : pose === "walk" ? -swing : 0.38;
+        L(x, sh, x + Math.sin(a) * arm, sh + Math.cos(a) * arm, 4);
+        L(x, sh, x - Math.sin(a) * arm, sh + Math.cos(a) * arm, 5);
+      }
+      if (o.label) D.text(o.label, x, y + 14, { size: 11, align: "center", color: o.color || C.ink2 });
+    },
+
+    /** A generic labelled token for anything without an icon: a hand-drawn circle with initials, caption below. */
+    token(label, x, y, size = 32, o = {}) {
+      const col = o.color || C.ink2, r = size / 2;
+      D.circle(x, y, r, { color: col, fill: o.fill, seed: hash(label) });
+      const words = String(label).trim().split(/[\s-]+/).filter(Boolean);
+      const short = (words.length > 1 ? words.slice(0, 2).map((w) => w[0]).join("") : (words[0] || "?").slice(0, 3)).toUpperCase();
+      D.text(short, x, y + 1, { size: Math.max(9, r * 0.75), align: "center", baseline: "middle", mono: true, color: col });
+      if (o.caption !== false && label) D.text(o.label || String(label), x, y + r + 13, { size: 11, align: "center", color: col });
+      return { w: size, h: size };
+    },
+
     lerp: (a, b, t) => a + (b - a) * t,
     clamp: (v, lo, hi) => Math.min(hi, Math.max(lo, v)),
     ease: (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2),
   };
+
+  // ---------- icon pack (lazy: only fetched the first time a sim draws an icon) ----------
+  const ICON_SRC = (() => {
+    try { return new URL("icons.js", document.currentScript.src).href; } catch { return "icons.js"; }
+  })();
+  let iconsRequested = false;
+  function loadIcons() {
+    if (iconsRequested || window.PB_ICONS) return;
+    iconsRequested = true;
+    const s = document.createElement("script");
+    s.src = ICON_SRC;
+    document.head.appendChild(s);
+  }
+  function iconData(name) {
+    const pack = window.PB_ICONS;
+    if (!pack) { loadIcons(); return null; }
+    const n = String(name).toLowerCase().trim().replace(/^fa-/, "").replace(/\s+/g, "-");
+    return pack[n] || pack[(window.PB_ICON_ALIASES || {})[n]] || pack[n.replace(/s$/, "")] || null;
+  }
+  const pathCache = new Map();
+  function iconPaths(name, d) {
+    let p = pathCache.get(name);
+    if (!p) { p = (Array.isArray(d) ? d : [d]).map((x) => new Path2D(x)); pathCache.set(name, p); }
+    return p;
+  }
 
   // ---------- protocol ----------
   function post(msg) { window.parent.postMessage(msg, "*"); }
