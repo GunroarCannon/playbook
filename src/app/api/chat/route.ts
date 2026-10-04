@@ -15,7 +15,7 @@ import { db } from "@/lib/db";
 import { MEMORY_KINDS, memoriesForPrompt, recall, remember, type ParsedMemory } from "@/lib/memory";
 import { systemPrompt } from "@/lib/prompts";
 import { sanitizeParams, type ParamValue, type SimDef } from "@/lib/sims";
-import { createCustomSim, reviseCustomSim, userSims } from "@/lib/sims-server";
+import { autoTitle, createCustomSim, reviseCustomSim, userSims } from "@/lib/sims-server";
 
 export const maxDuration = 120;
 
@@ -55,6 +55,7 @@ export async function POST(req: Request) {
     const find = (id: string | null | undefined) => benches.find((s) => s.id === id);
     let sim: SimDef = find(body.simId) ?? find(thread.sim_id) ?? benches[0];
     let simId = sim.id;
+    const startSim = find(thread.sim_id); // before any tool switches, builds or renames a bench
     const dials = body.dials ?? {};
     const lastUserText = textOf([...body.messages].reverse().find((m) => m.role === "user"));
 
@@ -134,7 +135,13 @@ export async function POST(req: Request) {
           build_bench: tool({
             description: "Have the AI build a brand-new simulation bench when no existing bench fits. Takes 20-40 seconds.",
             inputSchema: z.object({
-              request: z.string().min(20).max(1200).describe("what to simulate: the system, the dials it needs, what counts as pass or fail, and any of the person's numbers"),
+              request: z
+                .string()
+                .min(20)
+                .max(1200)
+                .describe(
+                  "what to simulate: the real system with its real names (actual substances and reactions, materials, vehicles, never 'reactant A'), the dials it needs, what counts as pass or fail, and any of the person's numbers",
+                ),
             }),
             execute: async ({ request }) => {
               try {
@@ -145,7 +152,16 @@ export async function POST(req: Request) {
                 sim = made.sim;
                 simId = sim.id;
                 await db.updateThread(user.id, thread.id, { sim_id: simId });
-                return { built: true, simId, name: sim.name, tagline: sim.tagline, dials: sim.params.map((p) => p.key), seconds: Math.round(made.ms / 1000) };
+                return {
+                  built: true,
+                  simId,
+                  name: sim.name,
+                  tagline: sim.tagline,
+                  dials: sim.params.map((p) => p.key),
+                  seconds: Math.round(made.ms / 1000),
+                  // tell the person which remembered facts shaped the bench (only the ones that matter)
+                  usedFromMemory: made.memories,
+                };
               } catch (e) {
                 return { built: false, error: e instanceof Error ? e.message : String(e) };
               }
@@ -158,10 +174,10 @@ export async function POST(req: Request) {
                   inputSchema: z.object({ change: z.string().min(8).max(800) }),
                   execute: async ({ change }) => {
                     try {
-                      const r = await reviseCustomSim(user, simId, { change });
+                      const r = await reviseCustomSim(user, simId, { change, memoryOn });
                       sim = r.sim;
                       benches = benches.map((s) => (s.id === simId ? r.sim : s));
-                      return { revised: true, simId, name: sim.name, version: r.version, dials: sim.params.map((p) => p.key) };
+                      return { revised: true, simId, name: sim.name, version: r.version, dials: sim.params.map((p) => p.key), usedFromMemory: r.memories };
                     } catch (e) {
                       return { revised: false, error: e instanceof Error ? e.message : String(e) };
                     }
@@ -230,7 +246,7 @@ export async function POST(req: Request) {
         writer.merge(toUIMessageStream({ stream: result.stream, sendStart: false }));
       },
       onEnd: async ({ messages }) => {
-        const title = thread.title === "New sheet" && lastUserText && !lastUserText.startsWith("[test]") ? lastUserText.slice(0, 60) : thread.title;
+        const title = autoTitle(thread.title, startSim, sim) ?? thread.title;
         await db.updateThread(user.id, thread.id, { messages, title, sim_id: simId, memory_on: memoryOn });
       },
       onError: (e) => {

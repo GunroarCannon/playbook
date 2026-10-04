@@ -109,6 +109,21 @@ const SUGGESTIONS: Record<string, string[]> = {
     "How many sales a day do I need just to cover my costs?",
     "Should I raise my price or try to sell more?",
   ],
+  titration: [
+    "I want to check my vinegar is really 5% acid. I have 0.5 mol/L NaOH and a 50 mL burette.",
+    "Why does methyl orange give the wrong answer with vinegar?",
+    "Which indicator should I use for hydrochloric acid?",
+  ],
+  reaction: [
+    "Science fair: which catalyst breaks down hydrogen peroxide fastest, yeast or manganese dioxide?",
+    "How much faster is the reaction at 40 °C than at room temperature?",
+    "Why does boiling the yeast stop it working?",
+  ],
+  fizz: [
+    "How much baking soda do I need for 200 mL of vinegar so nothing is wasted?",
+    "Will 20 g of baking soda pop my balloon?",
+    "Which runs out first, the chalk or the acid?",
+  ],
   evacuation: [
     "Our church hall holds 500 people and has two doors. Can everyone get out in 2.5 minutes?",
     "How much does one blocked exit slow things down?",
@@ -274,6 +289,9 @@ export default function App() {
     storeCustom(r.sim, r.code, r.version);
     await newSheet(r.sim.id);
     refreshMemories();
+    const used = (r.memories ?? []) as string[];
+    if (used.length)
+      notify(`Built with ${used.length} thing${used.length > 1 ? "s" : ""} Walrus Memory knows about you: ${used.slice(0, 3).map((m) => `“${m.length > 70 ? m.slice(0, 70) + "…" : m}”`).join(", ")}${used.length > 3 ? "…" : ""}`);
   }
 
   // ---------------------------------------------------------------- first-run walkthrough
@@ -707,7 +725,7 @@ function MemorySwitch({ on, onToggle, mode }: { on: boolean; onToggle: () => voi
   );
 }
 
-const BUILD_STAGES = ["Reading your idea…", "Sketching the diagram…", "Wiring up the dials…", "Writing the physics…", "Checking the code compiles…", "Almost there…"];
+const BUILD_STAGES = ["Reading your idea…", "Sketching the diagram…", "Wiring up the dials…", "Writing the physics…", "Test-running every dial…", "Checking nothing overlaps…", "Almost there…"];
 
 function BenchPicker({
   onPick,
@@ -802,6 +820,7 @@ function BenchPicker({
 
         {/* scrolling body */}
         <div className="overflow-y-auto overscroll-contain flex-1 min-h-0 px-5 py-4 flex flex-col gap-5">
+          <HowBenchesWork />
           {/* AI builder */}
           <section className="ink-box-soft bg-note/60 p-3 relative">
             <div className="flex items-center gap-2">
@@ -815,7 +834,7 @@ function BenchPicker({
               <div className="flex items-center gap-3 py-4 px-1">
                 <Gear size={40} className="text-navy animate-spin [animation-duration:3s] shrink-0" />
                 <div>
-                  <p className="hand text-[17px]">{BUILD_STAGES[stage]}</p>
+                  <p className="hand text-[17px]">{stage === 0 && memoryOn ? "Recalling what Walrus Memory knows about you…" : BUILD_STAGES[stage]}</p>
                   <p className="text-[12.5px] text-ink-3 italic line-clamp-2">“{idea}”</p>
                 </div>
               </div>
@@ -926,6 +945,39 @@ function BenchPicker({
         </div>
       </div>
     </div>
+  );
+}
+
+/** Short explainer: what a bench is, and how ready-made and AI-built ones differ. */
+function HowBenchesWork() {
+  return (
+    <details className="ink-box-soft border-dashed px-3 py-2 text-[13px] text-ink-2 group">
+      <summary className="hand text-[15px] text-ink cursor-pointer flex items-center gap-2 list-none">
+        <Icon name="circle-question" className="text-navy" />
+        How do benches work?
+        <span className="ml-auto text-ink-3 text-[12px] group-open:hidden">show</span>
+      </summary>
+      <div className="mt-2 flex flex-col gap-2 leading-snug">
+        <p>
+          A <b>bench</b> is a small simulation of one real situation. Turn the dials (or pick a scenario), then press the big red button to run a test.
+          The bench animates what happens, checks it against a pass rule (holds the load, reaches the goal, nobody waits too long) and reports the
+          numbers to the chat. With memory on, wins and failures are saved so next time starts from what you learned.
+        </p>
+        <p>
+          <b>Ready-made benches</b> are hand-built and checked. Each one uses real formulas and data (truss forces, compound interest, pH curves…),
+          and the chat can tell you exactly which.
+        </p>
+        <p>
+          <b>AI-built benches</b> are written on the spot from your description: the AI picks the dials and the pass rule and writes the simulation
+          code. With memory on, it first recalls what Walrus Memory knows about you (where you are, your currency, the equipment and limits
+          you&rsquo;ve mentioned) and builds those in as the defaults and targets. Before you see it, the code is test-run on our server: it has to
+          start, finish an animated test, react to every dial, keep its labels from overlapping and give believable numbers. If it crashes in
+          your browser, the AI repairs it. Great for quick what-ifs; double-check the numbers before
+          relying on them for anything important.
+        </p>
+        <p>Either way, the chat sees your dials and results, and can set dials, run tests, switch benches, or change an AI-built bench for you.</p>
+      </div>
+    </details>
   );
 }
 

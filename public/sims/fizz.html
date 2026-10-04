@@ -1,0 +1,150 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Fizz Balloon Bench — a solid reacts with an acid in a flask and the gas blows up a balloon on the neck.
+ * Stoichiometry: moles of solid = grams / molar mass, moles of acid = concentration × volume; the reagent that runs out
+ * first (the limiting reagent) sets the gas: n(gas) = min(n_solid, n_acid / ratio), V = n × 24.5 L/mol (25 °C, 1 atm).
+ * PASS: the balloon reaches the target size without bursting, and no more than maxWastePct of the excess reagent is left over.
+ */
+const VM = 24.5;
+const RX = {
+  soda: { solid: "NaHCO3", solidName: "baking soda", M: 84.01, acid: "CH3COOH", acidName: "vinegar", ratio: 1, gas: "CO2", eq: "NaHCO3 + CH3COOH -> CH3COONa + H2O + CO2", tau: 8 },
+  chalk: { solid: "CaCO3", solidName: "chalk", M: 100.09, acid: "HCl", acidName: "hydrochloric acid", ratio: 2, gas: "CO2", eq: "CaCO3 + 2HCl -> CaCl2 + H2O + CO2", tau: 40 },
+  magnesium: { solid: "Mg", solidName: "magnesium ribbon", M: 24.31, acid: "HCl", acidName: "hydrochloric acid", ratio: 2, gas: "H2", eq: "Mg + 2HCl -> MgCl2 + H2", tau: 20 },
+};
+
+function simulate(p) {
+  const r = RX[p.reaction] || RX.soda;
+  const nS = +p.solidG / r.M, nA = (+p.acidConc * +p.acidMl) / 1000;
+  const solidLimits = nS <= nA / r.ratio;
+  const nGas = Math.min(nS, nA / r.ratio);
+  const left = solidLimits ? nA - nGas * r.ratio : nS - nGas; // moles of the excess reagent left over
+  const wastePct = (left / (solidLimits ? nA : nS)) * 100;
+  const gasL = nGas * VM, dur = r.tau * 5;
+  const G = (s) => gasL * (1 - Math.exp(-s / r.tau)) / (1 - Math.exp(-5));
+  const burstAt = gasL >= +p.burstL ? -r.tau * Math.log(1 - (+p.burstL / gasL) * (1 - Math.exp(-5))) : Infinity;
+  const series = [];
+  for (let i = 0; i <= 60; i++) { const s = (dur * i) / 60; series.push([s, Math.min(G(s), +p.burstL)]); }
+  const burst = gasL >= +p.burstL, big = gasL >= +p.targetL, lean = wastePct <= +p.maxWastePct + 1e-9;
+  return { r, nS, nA, solidLimits, nGas, left, wastePct, gasL, dur, G, burstAt, series, burst, big, lean, ok: big && !burst && lean };
+}
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  const D = Bench.D;
+  Bench.metrics({
+    stressRatio: R.burst ? 1.3 : !R.big ? Math.min(1.5, +p.targetL / Math.max(0.01, R.gasL)) : Math.min(1.5, Math.max(0.3, R.wastePct / Math.max(1, +p.maxWastePct))),
+    label: `${D.fmt(R.gasL)} L of ${R.r.gas} · ${R.solidLimits ? R.r.solidName : R.r.acidName} runs out first`,
+    values: { gasL: +R.gasL.toFixed(2), leftoverPct: Math.round(R.wastePct) },
+  });
+}
+
+Bench.init({
+  params: { reaction: "soda", solidG: 5, acidMl: 100, acidConc: 0.83, targetL: 1, burstL: 3.5, maxWastePct: 25 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: null, dur: 5, done: false, p: { ...p } }; },
+  draw(D, p, dt, t) {
+    if (!R) publish(p);
+    const { C, ctx } = D;
+    D.grid();
+    const L = D.layout({ side: 0.46 });
+    if (anim && anim.t0 === null) anim.t0 = t;
+    const u = anim ? Math.min(1, (t - anim.t0) / anim.dur) : 1;
+    const s = u * R.dur;
+    const popped = R.burst && s >= R.burstAt;
+    const gas = Math.min(R.G(s), +p.burstL);
+    const done = R.gasL > 0 ? Math.min(1, R.G(s) / R.gasL) : 1; // how far the reaction has got
+    if (anim && !anim.done && u >= 1) { anim.done = true; finish(anim.p); }
+
+    D.text(D.chem(R.r.eq), L.header.x, L.header.y + 18, { size: 14, maxW: L.header.w });
+
+    // ---- stage: flask with the solid at the bottom, balloon on the neck
+    const S = L.stage;
+    const fh = Math.min(S.h * 0.45, S.w * 0.5), fw = fh * 1.05, fx = S.cx - fw / 2, fy = S.b - fh - 22;
+    const level = D.clamp(0.12 + (+p.acidMl / 500) * 0.8, 0.12, 0.9);
+    const fizzing = anim && !anim.done && done < 0.98;
+    D.vessel(fx, fy, fw, fh, { kind: "flask", level, liquid: R.r.acid === "HCl" ? C.green : C.amber, alpha: 0.28, bubbles: fizzing ? 1 - done * 0.8 : 0, t, label: D.fmt(p.acidMl) + " mL " + R.r.acidName + " + " + D.fmt(p.solidG) + " g " + R.r.solidName });
+    // what's left of the solid
+    const solidLeft = R.solidLimits ? 1 - done : 1 - done * (1 - R.left / R.nS);
+    const rr = D.rng(9), grains = Math.round(Math.min(26, 4 + +p.solidG * 1.4) * Math.max(0, solidLeft));
+    ctx.fillStyle = R.r.solid === "Mg" ? C.ink3 : C.ink2;
+    for (let i = 0; i < grains; i++) {
+      const gx = fx + fw * (0.18 + 0.64 * rr()), gy = fy + fh - 4 - rr() * 6;
+      if (R.r.solid === "Mg") ctx.fillRect(gx - 4, gy - 1, 8, 2); else { ctx.beginPath(); ctx.arc(gx, gy, 2.2, 0, Math.PI * 2); ctx.fill(); }
+    }
+    // balloon: volume ∝ r³, sized so the burst size just fits the stage above the flask
+    const neckW = fw * 0.34, roomR = Math.max(16, Math.min((fy - S.y - 8) / 2.1, S.w * 0.3));
+    const br = Math.max(neckW * 0.5, roomR * Math.cbrt(gas / +p.burstL));
+    const bcy = fy - br * 1.05;
+    if (popped) {
+      for (let k = 0; k < 10; k++) {
+        const a = (k / 10) * Math.PI * 2;
+        D.line(S.cx + Math.cos(a) * roomR * 0.35, fy - roomR + Math.sin(a) * roomR * 0.35, S.cx + Math.cos(a) * roomR * 0.8, fy - roomR + Math.sin(a) * roomR * 0.8, { color: C.red, single: true });
+      }
+      D.text("POP!", S.cx, fy - roomR + 6, { size: 18, align: "center", color: C.red });
+    } else {
+      D.circle(S.cx, bcy, br, { color: C.red, fill: "rgba(217,56,30,0.12)" });
+      D.line(S.cx - neckW / 2, fy, S.cx - br * 0.3, bcy + br * 0.95, { color: C.red, single: true });
+      D.line(S.cx + neckW / 2, fy, S.cx + br * 0.3, bcy + br * 0.95, { color: C.red, single: true });
+      if (br > 22) D.text(D.fmt(gas) + " L", S.cx, bcy + 5, { size: Math.min(16, br * 0.45), align: "center", mono: true, color: C.red });
+    }
+    // target size ring
+    const tr = roomR * Math.cbrt(Math.min(1, +p.targetL / +p.burstL));
+    ctx.setLineDash([4, 4]); ctx.strokeStyle = C.green; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(S.cx, fy - tr * 1.05, tr, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+
+    // ---- side: gas over time + the mole count
+    const ch = Math.max(100, L.side.h - 92);
+    const Gc = D.chart({ x: L.side.x, y: L.side.y, w: L.side.w, h: ch }, [{ data: R.series, color: C.navy }], {
+      title: D.chem(R.r.gas) + " in the balloon (L)", xLabel: "time (s)", xMin: 0, xMax: R.dur, yMin: 0, yMax: Math.max(+p.burstL, +p.targetL) * 1.12,
+      target: +p.targetL, targetLabel: "target " + D.fmt(p.targetL) + " L", upto: anim ? u : 1,
+    });
+    D.line(Gc.plot.x, Gc.Y(+p.burstL), Gc.plot.x + Gc.plot.w, Gc.Y(+p.burstL), { color: C.ink3, dash: [2, 4], width: 1, single: true, rough: 0 });
+    const ex = R.solidLimits ? R.r.acidName : R.r.solidName;
+    D.readouts(L.side.x, L.side.y + ch + 2, [
+      [D.chem(R.r.solid) + " added", D.fmt(R.nS) + " mol"],
+      [D.chem(R.r.acid) + " added", D.fmt(R.nA) + " mol" + (R.r.ratio > 1 ? " (needs " + R.r.ratio + "×)" : "")],
+      ["runs out first", R.solidLimits ? R.r.solidName : R.r.acidName, C.navy],
+      [ex + " left over", Math.round(R.wastePct) + "% (max " + p.maxWastePct + "%)", R.lean ? C.green : C.red],
+    ], { w: L.side.w, size: 12 });
+
+    if (anim && anim.done) D.stamp(R.ok ? "PERFECT MIX" : R.burst ? "BURST" : !R.big ? "TOO SMALL" : "WASTEFUL", S.cx, S.y + S.h * 0.3, R.ok ? C.green : C.red);
+    if (!anim) D.text("projection: press RUN TEST to tip the " + R.r.solidName + " in", L.footer.x, L.footer.y + 14, { size: 11, color: C.ink3, maxW: L.footer.w });
+  },
+});
+
+function finish(p) {
+  const D = Bench.D, r = R.r;
+  const ex = R.solidLimits ? r.acidName : r.solidName;
+  const setup = `${p.solidG} g of ${r.solidName} (${r.solid}) in ${p.acidMl} mL of ${p.acidConc} mol/L ${r.acidName}`;
+  const outcome = `${R.solidLimits ? r.solidName : r.acidName} runs out first, giving ${D.fmt(R.gasL)} L of ${r.gas}${R.burst ? `, which bursts the ${p.burstL} L balloon` : ""}, with ${Math.round(R.wastePct)}% of the ${ex} left over`;
+  const reasons = [];
+  if (R.burst) reasons.push(`${D.fmt(R.gasL)} L of gas is more than the balloon holds (${p.burstL} L)`);
+  if (!R.big) reasons.push(`only ${D.fmt(R.gasL)} L of gas, short of the ${p.targetL} L target: add more ${R.solidLimits ? r.solidName : r.acidName}`);
+  if (!R.lean) {
+    const need = R.solidLimits ? (R.nS * r.ratio * 1000) / +p.acidConc : R.nA / r.ratio * r.M;
+    reasons.push(`${Math.round(R.wastePct)}% of the ${ex} is wasted; about ${D.fmt(need)} ${R.solidLimits ? "mL of " + r.acidName : "g of " + r.solidName} would match exactly`);
+  }
+  Bench.result({
+    passed: R.ok,
+    summary: `${setup}: ${outcome}.`,
+    failureReason: R.ok ? undefined : reasons.join("; "),
+    score: R.ok ? Math.round(100 - R.wastePct) : undefined,
+    scoreLabel: "% of reagents used",
+    metrics: { gasL: +R.gasL.toFixed(2), solidMol: +R.nS.toFixed(4), acidMol: +R.nA.toFixed(4), leftoverPct: Math.round(R.wastePct) },
+  });
+}
+</script>
+</body>
+</html>

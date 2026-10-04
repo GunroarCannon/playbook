@@ -133,13 +133,205 @@
       ctx.stroke(); ctx.restore();
     },
 
+    /** o.maxW: shrink the font (down to 70%) and then cut the text with "…" so it never runs past maxW px. Returns { w, size }. */
     text(str, x, y, o = {}) {
+      str = String(str);
+      let size = o.size || 14;
+      const font = (s) => `${s}px ${o.mono ? "'JetBrains Mono', monospace" : "'Architects Daughter', 'Comic Sans MS', cursive"}`;
+      ctx.font = font(size);
+      if (o.maxW > 0 && ctx.measureText(str).width > o.maxW) {
+        const min = Math.max(9, Math.round(size * 0.7));
+        while (size > min && ctx.measureText(str).width > o.maxW) ctx.font = font(--size);
+        if (ctx.measureText(str).width > o.maxW) {
+          while (str.length > 1 && ctx.measureText(str + "…").width > o.maxW) str = str.slice(0, -1);
+          str += "…";
+        }
+      }
       ctx.fillStyle = o.color || C.ink;
-      ctx.font = `${o.size || 14}px ${o.mono ? "'JetBrains Mono', monospace" : "'Architects Daughter', 'Comic Sans MS', cursive"}`;
       ctx.textAlign = o.align || "left"; ctx.textBaseline = o.baseline || "alphabetic";
       if (o.rotate) { ctx.save(); ctx.translate(x, y); ctx.rotate(o.rotate); ctx.fillText(str, 0, 0); ctx.restore(); }
       else ctx.fillText(str, x, y);
+      const w = ctx.measureText(str).width;
       ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      return { w, size };
+    },
+
+    // ---------- layout kit (mainly for AI-built sims; mirrored by the stub in src/lib/sim-check.ts, keep in sync) ----------
+
+    /**
+     * Split the canvas into regions that never overlap, so nothing has to be placed for one canvas size.
+     * o: { side: share of the body for a chart/readout panel (0 = none, default 0.42), header: false, footer: false }
+     * Returns { header, stage, side (null when side is 0), footer }; each is { x, y, w, h, cx, cy, r, b }.
+     * Wide canvas: stage left, side right. Narrow/tall canvas: stage on top, side below.
+     */
+    layout(o = {}) {
+      const R = (x, y, w, h) => ({ x, y, w, h, cx: x + w / 2, cy: y + h / 2, r: x + w, b: y + h });
+      const side = D.clamp(o.side ?? 0.42, 0, 0.7), gap = 18, x0 = 20, x1 = W - 14;
+      const headH = o.header === false ? 0 : 28, footH = o.footer === false ? 0 : 20;
+      const header = R(x0, 14, x1 - x0, headH);
+      const top = 14 + headH + 6, bottom = H - footH - 6;
+      const footer = R(x0, H - footH - 2, x1 - x0, footH);
+      const bw = x1 - x0, bh = Math.max(40, bottom - top);
+      if (side <= 0) return { header, stage: R(x0, top, bw, bh), side: null, footer };
+      if (W / H >= 1.15) {
+        const sw = Math.round((bw - gap) * side);
+        return { header, stage: R(x0, top, bw - gap - sw, bh), side: R(x1 - sw, top, sw, bh), footer };
+      }
+      const sh = Math.round((bh - gap) * side);
+      return { header, stage: R(x0, top, bw, bh - gap - sh), side: R(x0, bottom - sh, bw, sh), footer };
+    },
+
+    /** Format a number for display: 3 significant figures, thousands separators, scientific for tiny/huge. Never NaN. */
+    fmt(v, sig = 3) {
+      v = +v;
+      if (!Number.isFinite(v)) return "–";
+      const a = Math.abs(v);
+      if (a !== 0 && (a < 1e-3 || a >= 1e7)) return v.toExponential(Math.max(0, sig - 1)).replace("e+", "e");
+      if (a >= 1000) return Math.round(v).toLocaleString("en-US");
+      return String(+v.toPrecision(sig));
+    },
+
+    /** Chemical notation: "2H2 + O2 -> 2H2O" becomes "2H₂ + O₂ → 2H₂O"; charges with ^: "Fe^3+" -> "Fe³⁺"; "<=>" -> "⇌". */
+    chem(s) {
+      const SUB = "₀₁₂₃₄₅₆₇₈₉", SUP = { 0: "⁰", 1: "¹", 2: "²", 3: "³", 4: "⁴", 5: "⁵", 6: "⁶", 7: "⁷", 8: "⁸", 9: "⁹", "+": "⁺", "-": "⁻" };
+      return String(s)
+        .replace(/<=>/g, "⇌").replace(/->|=>/g, "→")
+        .replace(/\^(\d*[+-])/g, (_, c) => [...c].map((ch) => SUP[ch]).join(""))
+        .replace(/([A-Za-z)\]])(\d+)/g, (_, a, d) => a + [...d].map((ch) => SUB[+ch]).join(""));
+    },
+
+    /**
+     * Stacked readout lines inside a box: items = [[label, value, color?], ...] (falsy items are skipped).
+     * With o.w the label sits left and the value right-aligned at x + w; otherwise "label: value". Returns the height used.
+     */
+    readouts(x, y, items, o = {}) {
+      const size = o.size || 13, lh = size + 7;
+      let n = 0;
+      for (const it of items) {
+        if (!it) continue;
+        const [label, value, color] = Array.isArray(it) ? it : [String(it), ""];
+        const by = y + size + n * lh;
+        if (o.w) {
+          const vw = value === "" || value == null ? 0 : D.text(String(value), x + o.w, by, { size, mono: true, align: "right", color: color || C.ink, maxW: o.w * 0.6 }).w;
+          D.text(label, x, by, { size: size - 1, color: C.ink2, maxW: Math.max(24, o.w - vw - 8) });
+        } else D.text(value === "" || value == null ? label : `${label}: ${value}`, x, by, { size, color: color || C.ink, maxW: o.maxW });
+        n++;
+      }
+      return n * lh;
+    },
+
+    /**
+     * Line chart that fits inside box b = { x, y, w, h } (e.g. a region from D.layout), with ticks, labels and a legend.
+     * series: [{ data: [y0, y1, ...] or [[x, y], ...], color, label, dash, width }]
+     * o: { title, xLabel, xMin, xMax, yMin, yMax, target, targetLabel, upto (0..1: how much of each series to draw, for animation) }
+     * Returns { X(x), Y(y), plot } so extra marks can be drawn on the same axes.
+     */
+    chart(b, series, o = {}) {
+      const pts = series.map((s) => (s.data || []).map((d, i, a) => (Array.isArray(d) ? [+d[0], +d[1]] : [o.xMax != null ? (o.xMin ?? 0) + (i / Math.max(1, a.length - 1)) * (o.xMax - (o.xMin ?? 0)) : i, +d])));
+      const all = pts.flat().filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+      let xMin = o.xMin ?? Math.min(...all.map((p) => p[0]), 0), xMax = o.xMax ?? Math.max(...all.map((p) => p[0]), 1);
+      let yMin = o.yMin ?? Math.min(0, ...all.map((p) => p[1])), yMax = o.yMax ?? Math.max(...all.map((p) => p[1]), o.target ?? -Infinity, 1e-9) * 1.08;
+      if (!(xMax > xMin)) xMax = xMin + 1;
+      if (!(yMax > yMin)) yMax = yMin + 1;
+      const head = o.title ? 18 : 6;
+      const plot = { x: b.x + 40, y: b.y + head, w: Math.max(20, b.w - 48), h: Math.max(20, b.h - head - (o.xLabel ? 32 : 18)) };
+      const X = (v) => plot.x + ((v - xMin) / (xMax - xMin)) * plot.w, Y = (v) => plot.y + plot.h - ((v - yMin) / (yMax - yMin)) * plot.h;
+      if (o.title) D.text(o.title, b.x, b.y + 12, { size: 12, color: C.ink2, maxW: b.w });
+      D.line(plot.x, plot.y + plot.h, plot.x + plot.w, plot.y + plot.h, { width: 1.2, single: true, rough: 0.3 });
+      D.line(plot.x, plot.y, plot.x, plot.y + plot.h, { width: 1.2, single: true, rough: 0.3 });
+      const step = (span, n) => { const raw = span / n, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p; return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p; };
+      const ys = step(yMax - yMin, plot.h < 120 ? 3 : 4), xs = step(xMax - xMin, plot.w < 160 ? 3 : 5);
+      for (let v = Math.ceil(yMin / ys) * ys; v <= yMax + 1e-9; v += ys) {
+        D.text(D.fmt(v), plot.x - 5, Y(v) + 3, { size: 10, mono: true, align: "right", color: C.ink3, maxW: 34 });
+        D.line(plot.x - 3, Y(v), plot.x, Y(v), { width: 1, single: true, rough: 0 });
+      }
+      for (let v = Math.ceil(xMin / xs) * xs; v <= xMax + 1e-9; v += xs) D.text(D.fmt(v), X(v), plot.y + plot.h + 13, { size: 10, mono: true, align: "center", color: C.ink3 });
+      if (o.xLabel) D.text(o.xLabel, plot.x + plot.w / 2, plot.y + plot.h + 28, { size: 11, align: "center", color: C.ink2, maxW: plot.w });
+      if (o.target != null && Number.isFinite(+o.target)) {
+        const ty = Y(+o.target);
+        D.line(plot.x, ty, plot.x + plot.w, ty, { color: C.red, dash: [5, 4], width: 1.3, single: true, rough: 0 });
+        if (o.targetLabel) {
+          // label the end of the line the data stays farthest from, so the curve doesn't run through it
+          const p0 = pts[0] || [], a = p0[0], b = p0[p0.length - 1];
+          const left = a && b && Math.abs(a[1] - o.target) > Math.abs(b[1] - o.target);
+          D.text(o.targetLabel, left ? plot.x + 6 : plot.x + plot.w - 4, ty > plot.y + 16 ? ty - 5 : ty + 13, { size: 11, color: C.red, align: left ? "left" : "right", maxW: plot.w * 0.6 });
+        }
+      }
+      ctx.save(); ctx.beginPath(); ctx.rect(plot.x, plot.y - 2, plot.w + 2, plot.h + 4); ctx.clip();
+      const upto = o.upto ?? 1;
+      series.forEach((s, k) => {
+        const p = pts[k], n = Math.max(1, Math.round(upto * p.length));
+        if (!p.length) return;
+        ctx.strokeStyle = s.color || [C.navy, C.amber, C.green, C.blue, C.red][k % 5]; ctx.lineWidth = s.width || 2;
+        if (s.dash) ctx.setLineDash(s.dash);
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) i ? ctx.lineTo(X(p[i][0]), Y(p[i][1])) : ctx.moveTo(X(p[i][0]), Y(p[i][1]));
+        ctx.stroke(); ctx.setLineDash([]);
+        if (upto < 1) { ctx.fillStyle = ctx.strokeStyle; ctx.beginPath(); ctx.arc(X(p[n - 1][0]), Y(p[n - 1][1]), 3.5, 0, Math.PI * 2); ctx.fill(); }
+      });
+      ctx.restore();
+      const named = series.filter((s) => s.label);
+      named.forEach((s, k) => {
+        const ly = plot.y + 10 + k * 15, col = s.color || [C.navy, C.amber, C.green, C.blue, C.red][series.indexOf(s) % 5];
+        D.line(plot.x + 8, ly - 4, plot.x + 24, ly - 4, { color: col, width: 2.2, single: true, rough: 0, dash: s.dash });
+        D.text(s.label, plot.x + 29, ly, { size: 11, color: C.ink2, maxW: plot.w * 0.55 });
+      });
+      return { X, Y, plot };
+    },
+
+    /**
+     * Lab glassware / containers with liquid. x, y = top-left, w x h = outer size.
+     * o: { kind: "beaker"|"flask"|"tube"|"cylinder"|"tank", level 0..1, liquid (colour), alpha, bubbles 0..1 (fizz rate), t (seconds), marks (graduations), label (below) }
+     */
+    vessel(x, y, w, h, o = {}) {
+      const kind = o.kind || "beaker", level = D.clamp(+o.level || 0, 0, 1), col = o.color || C.ink;
+      const cx = x + w / 2, nw = w * 0.34, nh = h * 0.3, r = w / 2;
+      const shape = () => {
+        ctx.beginPath();
+        if (kind === "flask") { ctx.moveTo(cx - nw / 2, y); ctx.lineTo(cx - nw / 2, y + nh); ctx.lineTo(x, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(cx + nw / 2, y + nh); ctx.lineTo(cx + nw / 2, y); }
+        else if (kind === "tube") { ctx.moveTo(x, y); ctx.lineTo(x, y + h - r); ctx.arc(cx, y + h - r, r, Math.PI, 0, true); ctx.lineTo(x + w, y); }
+        else ctx.rect(x, y, w, h);
+      };
+      if (level > 0) {
+        ctx.save(); shape(); ctx.closePath(); ctx.clip();
+        const top = y + h - h * level;
+        ctx.fillStyle = o.liquid || C.blue; ctx.globalAlpha = o.alpha ?? 0.35; ctx.fillRect(x - 2, top, w + 4, h * level + 2); ctx.globalAlpha = 1;
+        if (o.bubbles > 0) {
+          const rr = D.rng(17), n = Math.round(4 + o.bubbles * 18), t = o.t || 0;
+          ctx.strokeStyle = o.liquid || C.blue; ctx.lineWidth = 1.2;
+          for (let i = 0; i < n; i++) {
+            const bx = x + w * (0.2 + 0.6 * rr()), ph = (t * (0.5 + o.bubbles) + rr()) % 1, by = y + h - 4 - ph * (h * level - 6);
+            if (by > top) { ctx.beginPath(); ctx.arc(bx + Math.sin(t * 3 + i) * 2, by, 1.5 + rr() * 2.5, 0, Math.PI * 2); ctx.stroke(); }
+          }
+        }
+        ctx.restore();
+        // surface line, as wide as the vessel is at that height
+        const sy = y + h - h * level;
+        let half = w / 2 - 3;
+        if (kind === "flask") half = sy < y + nh ? nw / 2 - 2 : nw / 2 + (w / 2 - nw / 2) * ((sy - y - nh) / (h - nh)) - 3;
+        else if (kind === "tube" && sy > y + h - r) half = Math.sqrt(Math.max(0, r * r - (sy - (y + h - r)) ** 2)) - 2;
+        if (half > 2) D.line(cx - half, sy, cx + half, sy, { color: o.liquid || C.blue, width: 1.2, single: true, rough: 0.4 });
+      }
+      if (kind === "flask") {
+        D.line(cx - nw / 2, y, cx - nw / 2, y + nh, { color: col }); D.line(cx - nw / 2, y + nh, x, y + h, { color: col });
+        D.line(x, y + h, x + w, y + h, { color: col }); D.line(x + w, y + h, cx + nw / 2, y + nh, { color: col });
+        D.line(cx + nw / 2, y + nh, cx + nw / 2, y, { color: col });
+      } else if (kind === "tube") {
+        D.line(x, y, x, y + h - r, { color: col }); D.line(x + w, y, x + w, y + h - r, { color: col });
+        ctx.strokeStyle = col; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(cx, y + h - r, r, Math.PI, 0, true); ctx.stroke();
+      } else {
+        D.line(x, y, x, y + h, { color: col }); D.line(x, y + h, x + w, y + h, { color: col }); D.line(x + w, y + h, x + w, y, { color: col });
+        if (kind === "tank") D.line(x, y, x + w, y, { color: col });
+        else D.line(x - 5, y - 3, x, y, { color: col, single: true });
+        if (kind === "cylinder") D.line(x - 8, y + h + 4, x + w + 8, y + h + 4, { color: col, width: 2 });
+      }
+      if (o.marks || kind === "cylinder") for (let k = 1; k < 10; k++) {
+        const my = y + h - (h * k) / 10, inset = kind === "flask" ? (w / 2 - nw / 2) * Math.max(0, (nh - (my - y)) / nh) : 0;
+        if (kind === "flask" && my < y + nh) continue;
+        D.line(x + w - 4 - inset - (k % 5 ? 6 : 12), my, x + w - 4 - inset, my, { color: C.ink3, width: 1, single: true, rough: 0 });
+      }
+      if (o.label) D.text(o.label, cx, y + h + (kind === "cylinder" ? 22 : 18), { size: 12, align: "center", color: C.ink2, maxW: Math.max(w + 40, 60) });
+      return { w, h };
     },
 
     /** Dimension line with arrowheads and a label, like a technical drawing. */

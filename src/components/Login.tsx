@@ -6,6 +6,7 @@ import { useState } from "react";
 export function LoginCard() {
   const [username, setUsername] = useState("");
   const [passcode, setPasscode] = useState("");
+  const [email, setEmail] = useState("");
   const [byo, setByo] = useState(false);
   const [accountId, setAccountId] = useState("");
   const [key, setKey] = useState("");
@@ -23,6 +24,7 @@ export function LoginCard() {
         body: JSON.stringify({
           username,
           passcode,
+          email: email.trim(),
           ...(byo ? { memwalAccountId: accountId, memwalKey: key } : {}),
         }),
       });
@@ -39,7 +41,7 @@ export function LoginCard() {
     <form onSubmit={submit} className="sheet ink-box p-5 sm:p-6 flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h2 className="hand text-2xl">Sign in or sign up</h2>
-        <span className="stamp text-[12px] text-blue">NO EMAIL</span>
+        <span className="stamp text-[12px] text-blue">EMAIL OPTIONAL</span>
       </div>
       <label className="flex flex-col gap-1">
         <span className="hand text-sm text-ink-2">Username</span>
@@ -60,6 +62,19 @@ export function LoginCard() {
           placeholder="4+ characters"
           autoComplete="current-password"
           className="mono bg-transparent border-b-[1.5px] border-ink/60 focus:border-blue outline-none py-1.5 text-[15px]"
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="hand text-sm text-ink-2">
+          Email <span className="text-ink-3">(optional)</span>
+        </span>
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="for Playbook updates, never needed to sign in"
+          autoComplete="email"
+          className="mono bg-transparent border-b-[1.5px] border-ink/60 focus:border-blue outline-none py-1.5 text-[15px] placeholder:text-[13px]"
         />
       </label>
       <p className="text-[13px] text-ink-3 -mt-1">A new username creates your account. Use the same one on any device and your memory follows you.</p>

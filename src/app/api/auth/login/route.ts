@@ -13,6 +13,7 @@ const Body = z.object({
   passcode: z.string().min(4, "Passcode must be at least 4 characters").max(100),
   memwalAccountId: z.string().trim().optional(),
   memwalKey: z.string().trim().optional(),
+  email: z.union([z.literal(""), z.string().trim().toLowerCase().pipe(z.email("That email doesn't look right").max(254))]).optional(),
 });
 
 /** Sign in, or create the account if the username is new. */
@@ -20,7 +21,7 @@ export async function POST(req: Request) {
   try {
     const parsed = Body.safeParse(await req.json());
     if (!parsed.success) return Response.json({ error: parsed.error.issues[0].message }, { status: 400 });
-    const { username, passcode, memwalAccountId, memwalKey } = parsed.data;
+    const { username, passcode, memwalAccountId, memwalKey, email } = parsed.data;
 
     let user = await db.getUserByName(username);
     let created = false;
@@ -38,6 +39,8 @@ export async function POST(req: Request) {
       });
       created = true;
     }
+    // Optional: lands on the email list, linked to this account. Never needed to sign in.
+    if (email) await db.addSubscriber(email, created ? "signup" : "signin", user.id).catch(() => false);
     await createSession(user.id);
     return Response.json({ ok: true, created, username: user.username });
   } catch (e) {

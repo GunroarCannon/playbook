@@ -16,11 +16,13 @@ export async function POST(req: Request) {
   try {
     const user = await requireUser();
     const { simId, memoryOn } = (await req.json().catch(() => ({}))) as { simId?: string; memoryOn?: boolean };
+    const sim = (await resolveSim(user, simId)) ?? (await resolveSim(user, "truss"))!;
     const thread = await db.createThread({
       id: nanoid(12),
       user_id: user.id,
-      title: "New sheet",
-      sim_id: (await resolveSim(user, simId))?.id ?? "truss",
+      // named after its bench; follows the bench if the chat switches (see autoTitle in lib/sims-server.ts)
+      title: sim.name,
+      sim_id: sim.id,
       memory_on: memoryOn ?? true,
       messages: [],
     });

@@ -31,6 +31,16 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, onPrese
   const [metrics, setMetrics] = useState<SimMetrics | null>(null);
   const [testing, setTesting] = useState(false);
   const [simError, setSimError] = useState<string | null>(null);
+  // The name badge sits over the drawing, so it only shows briefly when a bench opens (and on hover).
+  const [badgeFor, setBadgeFor] = useState<string | null>(sim.id);
+  useEffect(() => {
+    const show = setTimeout(() => setBadgeFor(sim.id), 0);
+    const hide = setTimeout(() => setBadgeFor(null), 4000);
+    return () => {
+      clearTimeout(show);
+      clearTimeout(hide);
+    };
+  }, [sim.id]);
   const dialsRef = useRef(dials);
   const onResultRef = useRef(onResult);
   const onSimErrorRef = useRef(onSimError);
@@ -115,7 +125,7 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, onPrese
   return (
     <section className="flex flex-col h-full min-h-0">
       {/* drawing sheet */}
-      <div data-tour="bench" className="relative flex-1 min-h-[200px] m-2 sm:m-3 mb-2 ink-box overflow-hidden bg-sheet">
+      <div data-tour="bench" className="group relative flex-1 min-h-[200px] m-2 sm:m-3 mb-2 ink-box overflow-hidden bg-sheet">
         <iframe
           ref={frame}
           key={sim.id + (srcDoc ? ":custom" : "")}
@@ -136,7 +146,11 @@ export default function Workbench({ sim, srcDoc, dials, onDial, onReset, onPrese
             <span className="hand text-[18px] pulse">{busyNote}</span>
           </div>
         )}
-        <div className="hidden sm:block absolute top-2 right-2 hand text-[12px] px-2 py-0.5 sheet ink-box-soft text-ink-2">
+        <div
+          className={`hidden sm:block absolute top-2 right-2 hand text-[12px] px-2 py-0.5 sheet ink-box-soft text-ink-2 pointer-events-none transition-opacity duration-500 ${
+            badgeFor === sim.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          }`}
+        >
           {sim.custom && <span className="text-navy">✦ AI-built · </span>}
           {sim.name}
         </div>

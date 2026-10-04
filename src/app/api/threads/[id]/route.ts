@@ -1,6 +1,6 @@
 import { errorResponse, requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { resolveSim } from "@/lib/sims-server";
+import { autoTitle, resolveSim } from "@/lib/sims-server";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -21,9 +21,15 @@ export async function PATCH(req: Request, { params }: Ctx) {
     const user = await requireUser();
     const { id } = await params;
     const body = (await req.json()) as { title?: string; simId?: string; memoryOn?: boolean };
+    const nextSim = body.simId ? await resolveSim(user, body.simId) : null;
+    let renamed: string | null = null;
+    if (nextSim && !body.title) {
+      const thread = await db.getThread(user.id, id);
+      if (thread) renamed = autoTitle(thread.title, await resolveSim(user, thread.sim_id), nextSim);
+    }
     await db.updateThread(user.id, id, {
-      ...(body.title ? { title: body.title.slice(0, 80) } : {}),
-      ...(body.simId && (await resolveSim(user, body.simId)) ? { sim_id: body.simId } : {}),
+      ...(body.title ? { title: body.title.slice(0, 80) } : renamed ? { title: renamed } : {}),
+      ...(nextSim ? { sim_id: nextSim.id } : {}),
       ...(typeof body.memoryOn === "boolean" ? { memory_on: body.memoryOn } : {}),
     });
     return Response.json({ ok: true });

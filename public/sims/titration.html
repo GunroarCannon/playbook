@@ -1,0 +1,176 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Titration Bench — sodium hydroxide from a 50 mL burette into an acid in a conical flask.
+ * pH comes from the full charge balance [H+] + [Na+] = [OH-] + [A-] (A- = Ka·C/(Ka + [H+]) for a weak acid), solved by
+ * bisection, so strong and weak acids both give the right curve. You stop at the indicator's colour change (the end
+ * point); the test passes when that is within `tolerance` mL of the true equivalence point, Veq = Ca·Va / Cb.
+ */
+const KW = 1e-14, BURETTE = 50;
+const ACIDS = {
+  hcl: { name: "hydrochloric acid", f: "HCl", Ka: Infinity, eq: "HCl + NaOH -> NaCl + H2O" },
+  ethanoic: { name: "ethanoic acid (vinegar)", f: "CH3COOH", Ka: 1.8e-5, eq: "CH3COOH + NaOH -> CH3COONa + H2O" },
+  methanoic: { name: "methanoic acid", f: "HCOOH", Ka: 1.8e-4, eq: "HCOOH + NaOH -> HCOONa + H2O" },
+};
+// lo..hi = pH range of the colour change; end = where you'd stop (first lasting change); a/b = acid/base colours
+const INDICATORS = {
+  phenolphthalein: { name: "phenolphthalein", lo: 8.2, hi: 10, end: 8.6, a: "#c9d3de", b: "#e0529c" },
+  bromothymol: { name: "bromothymol blue", lo: 6.0, hi: 7.6, end: 7.0, a: "#d6b21c", b: "#2a64c9" },
+  methylred: { name: "methyl red", lo: 4.4, hi: 6.2, end: 5.2, a: "#d9381e", b: "#e3c21a" },
+  methylorange: { name: "methyl orange", lo: 3.1, hi: 4.4, end: 3.8, a: "#d9381e", b: "#e8a317" },
+};
+
+function pHAt(p, vb) {
+  const A = ACIDS[p.acid] || ACIDS.hcl, va = +p.acidVol, vt = va + vb;
+  const CA = (+p.acidConc * va) / vt, Na = (+p.baseConc * vb) / vt;
+  let lo = -14.5, hi = 1; // log10 [H+]; f(h) rises with h
+  for (let i = 0; i < 50; i++) {
+    const m = (lo + hi) / 2, h = Math.pow(10, m);
+    const a = A.Ka === Infinity ? CA : (CA * A.Ka) / (A.Ka + h);
+    if (h + Na - KW / h - a > 0) hi = m; else lo = m;
+  }
+  return -(lo + hi) / 2;
+}
+
+function mix(c1, c2, u) {
+  const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16), k = Math.min(1, Math.max(0, u));
+  const ch = (s) => Math.round(((a >> s) & 255) * (1 - k) + ((b >> s) & 255) * k);
+  return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
+}
+// square root: the first hint of the new colour is what you see, so it shows early in the range
+const colourAt = (ind, pH) => mix(ind.a, ind.b, Math.sqrt(Math.min(1, Math.max(0, (pH - ind.lo) / (ind.hi - ind.lo)))));
+
+let R = null, anim = null;
+function simulate(p) {
+  const ind = INDICATORS[p.indicator] || INDICATORS.phenolphthalein, A = ACIDS[p.acid] || ACIDS.hcl;
+  const veq = (+p.acidConc * +p.acidVol) / +p.baseConc;
+  const curve = [];
+  let vend = null;
+  for (let v = 0; v <= BURETTE + 1e-9; v += 0.05) {
+    const ph = pHAt(p, v);
+    if (vend === null && ph >= ind.end) {
+      // the curve is near-vertical here, so pin the crossing down by bisection rather than interpolating
+      let lo = Math.max(0, v - 0.05), hi = v;
+      if (v > 0) for (let i = 0; i < 30; i++) { const m = (lo + hi) / 2; if (pHAt(p, m) >= ind.end) hi = m; else lo = m; }
+      vend = v > 0 ? hi : 0;
+    }
+    curve.push([v, ph]);
+  }
+  const err = vend === null ? null : vend - veq;
+  const ok = veq <= BURETTE && err !== null && Math.abs(err) <= +p.tolerance;
+  return { ind, A, veq, vend, err, ok, curve, pHeq: veq <= BURETTE ? pHAt(p, veq) : null, pH0: curve[0][1] };
+}
+
+function publish(p) {
+  R = simulate(p);
+  Bench.metrics({
+    stressRatio: R.err === null ? 1.5 : Math.min(1.5, Math.abs(R.err) / +p.tolerance),
+    label: R.vend === null ? `no colour change within ${BURETTE} mL` : `end point ${Bench.D.fmt(R.vend)} mL vs equivalence ${Bench.D.fmt(R.veq)} mL`,
+    values: { equivalenceMl: +R.veq.toFixed(2), endPointMl: R.vend === null ? "none" : +R.vend.toFixed(2) },
+  });
+}
+
+Bench.init({
+  params: { acid: "ethanoic", acidConc: 0.1, acidVol: 25, baseConc: 0.1, indicator: "phenolphthalein", tolerance: 0.5 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: null, dur: 5, done: false, p: { ...p } }; },
+  draw(D, p, dt, t) {
+    if (!R) publish(p);
+    const { C, ctx } = D;
+    D.grid();
+    const L = D.layout({ side: 0.48 });
+    if (anim && anim.t0 === null) anim.t0 = t;
+    const u = anim ? Math.min(1, (t - anim.t0) / anim.dur) : 1;
+    const vStop = R.vend ?? BURETTE;
+    // fast at first, drop by drop near the end, like a real titration
+    const vb = anim ? vStop * (1 - Math.pow(1 - u, 2.6)) : vStop;
+    const ph = pHAt(p, vb);
+    if (anim && !anim.done && u >= 1) { anim.done = true; finish(anim.p); }
+
+    D.text(D.chem(R.A.eq) + "  ·  indicator: " + R.ind.name, L.header.x, L.header.y + 18, { size: 14, maxW: L.header.w });
+
+    // ---- stage: burette over a conical flask
+    const S = L.stage;
+    const bw = Math.max(14, Math.min(26, S.w * 0.06)), bh = S.h * 0.46, bx = S.cx - bw / 2, by = S.y + 4;
+    D.vessel(bx, by, bw, bh, { kind: "tank", level: Math.max(0, (BURETTE - vb) / BURETTE), liquid: C.blue, marks: true });
+    const tipY = by + bh + 16;
+    D.line(S.cx, by + bh, S.cx, tipY, { width: 2 });
+    D.rect(S.cx - 9, by + bh + 4, 18, 6, { fill: C.ink2 });
+    D.text(D.chem("NaOH") + " " + D.fmt(p.baseConc) + " mol/L", bx + bw + 10, by + 16, { size: 12, color: C.ink2, maxW: S.r - bx - bw - 12 });
+    D.text(D.fmt(vb) + " mL added", bx + bw + 10, by + 34, { size: 12, mono: true, maxW: S.r - bx - bw - 12 });
+    const fh = Math.max(50, S.b - tipY - 30), fw = Math.min(S.w * 0.6, fh * 1.15), fy = S.b - fh - 20;
+    const fill = Math.min(0.85, 0.25 + ((+p.acidVol + vb) / 250) * 0.9);
+    const running = anim && !anim.done;
+    D.vessel(S.cx - fw / 2, fy, fw, fh, {
+      kind: "flask", level: fill, liquid: colourAt(R.ind, ph), alpha: 0.75, label: D.fmt(p.acidVol) + " mL " + R.A.f + " " + D.fmt(p.acidConc) + " mol/L",
+    });
+    if (running) {
+      const ph2 = (t * 2.6) % 1, dy = D.lerp(tipY + 4, fy + fh * (1 - fill), ph2);
+      ctx.fillStyle = C.blue; ctx.beginPath(); ctx.arc(S.cx, dy, 2.6, 0, Math.PI * 2); ctx.fill();
+    }
+    D.text("pH " + ph.toFixed(2), S.cx + fw / 2 + 10, fy + fh * 0.6, { size: 15, mono: true, color: C.navy, maxW: Math.max(40, S.r - S.cx - fw / 2 - 10) });
+
+    // ---- side: titration curve + readouts
+    const ch = Math.max(100, L.side.h - 92);
+    const xMax = Math.min(BURETTE, Math.max(10, Math.ceil(Math.max(R.veq, R.vend ?? 0) * 1.5 / 5) * 5));
+    const shown = R.curve.filter((c) => c[0] <= xMax && (!anim || c[0] <= vb + 1e-9));
+    const G = D.chart({ x: L.side.x, y: L.side.y, w: L.side.w, h: ch }, [{ data: shown, color: C.navy }], {
+      title: "pH as the NaOH goes in", xLabel: "NaOH added (mL)", xMin: 0, xMax, yMin: 0, yMax: 14, target: R.ind.end, targetLabel: R.ind.name + " changes",
+    });
+    // the indicator's colour-change band
+    ctx.fillStyle = R.ind.b; ctx.globalAlpha = 0.12;
+    ctx.fillRect(G.plot.x, G.Y(R.ind.hi), G.plot.w, G.Y(R.ind.lo) - G.Y(R.ind.hi)); ctx.globalAlpha = 1;
+    if (R.veq <= xMax) {
+      D.line(G.X(R.veq), G.plot.y, G.X(R.veq), G.plot.y + G.plot.h, { color: C.green, dash: [4, 4], single: true, rough: 0 });
+      D.text("equivalence", G.X(R.veq) + 4, G.plot.y + G.plot.h - 6, { size: 10, color: C.green, maxW: Math.max(30, G.plot.x + G.plot.w - G.X(R.veq) - 6) });
+    }
+    const errTxt = R.err === null ? "no change" : (R.err >= 0.005 ? "+" : R.err <= -0.005 ? "−" : "") + Math.abs(R.err).toFixed(2) + " mL";
+    D.readouts(L.side.x, L.side.y + ch + 2, [
+      ["equivalence point", R.veq > BURETTE ? D.fmt(R.veq) + " mL (> burette)" : D.fmt(R.veq) + " mL", R.veq > BURETTE ? C.red : C.ink],
+      ["colour change at", R.vend === null ? "never" : D.fmt(R.vend) + " mL"],
+      ["error (allowed ±" + D.fmt(p.tolerance) + " mL)", errTxt, R.ok ? C.green : C.red],
+      ["pH at equivalence", R.pHeq === null ? "–" : R.pHeq.toFixed(2)],
+    ], { w: L.side.w, size: 12 });
+
+    if (anim && anim.done) D.stamp(R.ok ? "SPOT ON" : R.vend === null || R.veq > BURETTE ? "RAN OUT" : R.err < 0 ? "TOO EARLY" : "OVERSHOT", S.cx, S.y + S.h * 0.38, R.ok ? C.green : C.red);
+    if (!anim) D.text("projection: press RUN TEST to titrate until the colour changes", L.footer.x, L.footer.y + 14, { size: 11, color: C.ink3, maxW: L.footer.w });
+  },
+});
+
+function finish(p) {
+  const D = Bench.D;
+  const setup = `${p.acidVol} mL of ${p.acidConc} mol/L ${R.A.name} titrated with ${p.baseConc} mol/L NaOH using ${R.ind.name}`;
+  let outcome, reason;
+  if (R.veq > BURETTE) {
+    outcome = `it needs ${D.fmt(R.veq)} mL of NaOH, more than the ${BURETTE} mL burette holds`;
+    reason = `the burette runs out: use stronger NaOH or less acid`;
+  } else if (R.vend === null) {
+    outcome = `the indicator never changed colour within ${BURETTE} mL`;
+    reason = `${R.ind.name} changes at pH ${R.ind.lo}-${R.ind.hi}, which this titration never reaches`;
+  } else {
+    outcome = `the colour changed at ${D.fmt(R.vend)} mL against a true equivalence point of ${D.fmt(R.veq)} mL (${R.err >= 0.005 ? "+" : R.err <= -0.005 ? "−" : ""}${Math.abs(R.err).toFixed(2)} mL)`;
+    reason = `${R.ind.name} changes colour at pH ${R.ind.lo}-${R.ind.hi}, but the pH at equivalence is ${R.pHeq.toFixed(1)}, so it changes ${Math.abs(R.err).toFixed(2)} mL ${R.err < 0 ? "too early" : "too late"} (allowed ${p.tolerance} mL)`;
+  }
+  Bench.result({
+    passed: R.ok,
+    summary: `${setup}: ${outcome}.`,
+    failureReason: R.ok ? undefined : reason,
+    score: R.ok ? +(100 - (Math.abs(R.err) / R.veq) * 100).toFixed(1) : undefined,
+    scoreLabel: "accuracy %",
+    metrics: { equivalenceMl: +R.veq.toFixed(2), endPointMl: R.vend === null ? -1 : +R.vend.toFixed(2), errorMl: R.err === null ? -1 : +R.err.toFixed(2), pHAtEquivalence: R.pHeq === null ? -1 : +R.pHeq.toFixed(2) },
+  });
+}
+</script>
+</body>
+</html>

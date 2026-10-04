@@ -144,6 +144,7 @@ const UI = [
   "snowflake", "bed", "wind", "bottle-water", "gauge-high", "filter", "kitchen-set", "tv", "egg", "umbrella", "building", "road",
   "warehouse", "glass-water", "fan", "temperature-high", "shower", "percent", "wallet", "bowl-food", "scissors", "shirt", "church",
   "person-cane", "door-open", "magnifying-glass", "battery-half", "people-roof",
+  "vial", "eye-dropper", "lemon", "atom", "stopwatch", "temperature-low", "flask-vial", "scale-balanced",
 ];
 const brands = (n) => families[n]?.svgs?.classic?.brands;
 const ui = {};

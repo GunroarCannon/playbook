@@ -1,0 +1,141 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>html,body{margin:0;height:100%;overflow:hidden}canvas{display:block;width:100%;height:100%}</style>
+</head>
+<body>
+<canvas id="simCanvas"></canvas>
+<script src="bench.js"></script>
+<script>
+/*
+ * Reaction Rate Bench — hydrogen peroxide decomposing, 2H2O2 -> 2H2O + O2, with the oxygen collected in a 100 mL gas syringe.
+ * First order in H2O2: n(t) = n0·e^(-kt), so O2 collected V(t) = Vmax·(1 - e^(-kt)), Vmax = (n0/2)·RT/P.
+ * k = k25 · grams of catalyst · exp(-Ea/R · (1/T - 1/298 K)) (Arrhenius), with typical classroom values for each catalyst;
+ * catalase (yeast) is an enzyme and stops working above about 50 °C.
+ * PASS: the target volume is collected within the time limit and the syringe never overfills (the plunger would pop out).
+ */
+const RGAS = 8.314, SYRINGE = 100;
+const CATS = {
+  none: { name: "no catalyst", short: "none", k: 2e-7, Ea: 75 },
+  ki: { name: "potassium iodide (KI)", short: "KI", k: 0.004, Ea: 56 },
+  mno2: { name: "manganese(IV) oxide (MnO2)", short: "MnO2", k: 0.012, Ea: 58 },
+  yeast: { name: "yeast (catalase enzyme)", short: "catalase", k: 0.02, Ea: 23, enzyme: true },
+};
+
+function simulate(p) {
+  const c = CATS[p.catalyst] || CATS.none, T = +p.tempC + 273.15;
+  let k = c.k * (p.catalyst === "none" ? 1 : +p.catalystG) * Math.exp(-((c.Ea * 1000) / RGAS) * (1 / T - 1 / 298.15));
+  if (c.enzyme) k /= 1 + Math.exp((+p.tempC - 50) / 4); // the enzyme denatures
+  const n0 = (+p.concPct * +p.volMl) / 100 / 34.01; // % w/v = g per 100 mL; H2O2 = 34.01 g/mol
+  const vMax = (n0 / 2) * 0.082057 * T * 1000; // mL of O2 at 1 atm
+  const tl = +p.timeLimit, target = +p.targetMl;
+  const tAt = (v) => (v < vMax ? -Math.log(1 - v / vMax) / k : Infinity);
+  const V = (s) => vMax * (1 - Math.exp(-k * s));
+  const tTarget = tAt(target), tFull = tAt(SYRINGE);
+  const series = [];
+  for (let i = 0; i <= 80; i++) { const s = (tl * i) / 80; series.push([s, Math.min(V(s), SYRINGE)]); }
+  const overflow = tFull <= tl, reached = tTarget <= tl && tTarget <= tFull;
+  return { c, k, n0, vMax, V, tl, target, tTarget, tFull, series, overflow, reached, ok: reached && !overflow, half: Math.log(2) / k };
+}
+
+let R = null, anim = null;
+function publish(p) {
+  R = simulate(p);
+  const D = Bench.D;
+  Bench.metrics({
+    stressRatio: R.overflow ? 1.2 : Math.min(1.5, R.tTarget / R.tl),
+    label: R.overflow ? `syringe fills at ${D.fmt(R.tFull)} s: too much gas` : R.reached ? `${D.fmt(R.target)} mL after ${D.fmt(R.tTarget)} s` : `only ${D.fmt(R.V(R.tl))} mL in ${R.tl} s`,
+    values: { k: +R.k.toPrecision(3), o2AtLimitMl: Math.round(Math.min(SYRINGE, R.V(R.tl))) },
+  });
+}
+
+Bench.init({
+  params: { catalyst: "mno2", concPct: 3, volMl: 8, tempC: 25, catalystG: 0.5, targetMl: 50, timeLimit: 180 },
+  onParams(p) { if (!anim || anim.done) anim = null; publish(p); },
+  onReset(p) { anim = null; publish(p); },
+  onRun(p) { publish(p); anim = { t0: null, dur: 5, done: false, p: { ...p } }; },
+  draw(D, p, dt, t) {
+    if (!R) publish(p);
+    const { C, ctx } = D;
+    D.grid();
+    const L = D.layout({ side: 0.46 });
+    if (anim && anim.t0 === null) anim.t0 = t;
+    const u = anim ? Math.min(1, (t - anim.t0) / anim.dur) : 1;
+    const stopAt = R.overflow ? R.tFull : R.tl;
+    const s = Math.min(u * R.tl, stopAt); // seconds of real reaction time shown
+    const vol = Math.min(SYRINGE, R.V(s));
+    if (anim && !anim.done && u >= 1) { anim.done = true; finish(anim.p); }
+
+    D.text(D.chem("2H2O2 -> 2H2O + O2") + "  ·  " + R.c.name + "  ·  " + p.tempC + " °C", L.header.x, L.header.y + 18, { size: 14, maxW: L.header.w });
+
+    // ---- stage: flask -> delivery tube -> gas syringe
+    const S = L.stage;
+    const fh = Math.min(S.h * 0.55, S.w * 0.45), fw = fh * 0.95, fx = S.x + 8, fy = S.b - fh - 22;
+    const rate = R.vMax * R.k * Math.exp(-R.k * s); // mL/s right now
+    const fizz = vol >= SYRINGE && R.overflow ? 0.3 : D.clamp(rate / 1.5, rate > 0.005 ? 0.06 : 0, 1);
+    D.vessel(fx, fy, fw, fh, { kind: "flask", level: 0.42, liquid: C.blue, bubbles: anim || rate > 0.005 ? fizz : 0, t, label: D.fmt(p.volMl) + " mL of " + D.fmt(p.concPct) + "% " + D.chem("H2O2") });
+    if (p.catalyst !== "none") {
+      const rr = D.rng(3), grains = Math.round(4 + Math.min(14, +p.catalystG * 6));
+      ctx.fillStyle = p.catalyst === "mno2" ? C.ink : p.catalyst === "ki" ? C.ink3 : C.amber;
+      for (let i = 0; i < grains; i++) { ctx.beginPath(); ctx.arc(fx + fw * (0.2 + 0.6 * rr()), fy + fh - 4 - rr() * 5, 2 + rr() * 1.5, 0, Math.PI * 2); ctx.fill(); }
+    }
+    D.icon(+p.tempC > 35 ? "temperature-high" : +p.tempC < 15 ? "temperature-low" : "temperature-half", fx + fw + 14, fy + fh - 12, 22, { color: +p.tempC > 35 ? C.red : +p.tempC < 15 ? C.blue : C.ink3 });
+    const neckX = fx + fw / 2, sw = Math.max(80, S.r - neckX - 60), sh = Math.max(18, Math.min(30, S.h * 0.1));
+    const sx = S.r - sw - 6, sy = S.y + 12;
+    D.line(neckX, fy, neckX, sy + sh / 2, { width: 2 });
+    D.line(neckX, sy + sh / 2, sx, sy + sh / 2, { width: 2 });
+    D.rect(sx, sy, sw, sh);
+    for (let m = 10; m < 100; m += 10) D.line(sx + (m / 100) * sw, sy, sx + (m / 100) * sw, sy + (m % 50 ? 5 : 9), { color: C.ink3, width: 1, single: true, rough: 0 });
+    const popped = R.overflow && s >= R.tFull;
+    const px = popped ? Math.min(S.r - 4, sx + sw + 24) : sx + (vol / 100) * sw;
+    ctx.fillStyle = C.blue; ctx.globalAlpha = 0.18; ctx.fillRect(sx + 2, sy + 2, Math.max(0, Math.min(px, sx + sw) - sx - 4), sh - 4); ctx.globalAlpha = 1;
+    D.line(px, sy + 2, px, sy + sh - 2, { width: 3, color: C.navy });
+    D.text(popped ? "plunger popped out!" : "gas syringe: " + D.fmt(vol) + " of 100 mL", sx, sy + sh + 16, { size: 12, mono: !popped, color: popped ? C.red : C.ink2, maxW: sw });
+    D.text("t = " + D.fmt(s) + " s", sx, sy + sh + 34, { size: 12, mono: true, color: C.ink3, maxW: sw });
+
+    // ---- side: O2 collected over time + readouts
+    const ch = Math.max(100, L.side.h - 92);
+    const G = D.chart({ x: L.side.x, y: L.side.y, w: L.side.w, h: ch }, [{ data: R.series, color: C.navy }], {
+      title: "oxygen collected (mL)", xLabel: "time (s)", xMin: 0, xMax: R.tl, yMin: 0, yMax: Math.max(SYRINGE, R.target) * 1.1,
+      target: R.target, targetLabel: "target " + D.fmt(R.target) + " mL", upto: anim ? Math.min(1, s / R.tl) : 1,
+    });
+    D.line(G.plot.x, G.Y(SYRINGE), G.plot.x + G.plot.w, G.Y(SYRINGE), { color: C.ink3, dash: [2, 4], width: 1, single: true, rough: 0 });
+    D.readouts(L.side.x, L.side.y + ch + 2, [
+      ["rate constant k", R.k < 1e-4 ? D.fmt(R.k) + " /s" : R.k.toFixed(4) + " /s"],
+      ["half-life", R.half > 1e5 ? "days" : D.fmt(R.half) + " s"],
+      ["all of it would give", D.fmt(R.vMax) + " mL O₂", R.vMax > SYRINGE ? C.amber : C.ink],
+      ["target reached", R.reached ? "after " + D.fmt(R.tTarget) + " s" : "not in " + R.tl + " s", R.ok ? C.green : C.red],
+    ], { w: L.side.w, size: 12 });
+
+    if (anim && anim.done) D.stamp(R.ok ? "ON TIME" : R.overflow ? "OVERFLOW" : "TOO SLOW", S.cx, S.y + S.h * 0.42, R.ok ? C.green : C.red);
+    if (!anim) D.text("projection: press RUN TEST to start the clock (" + R.tl + " s squeezed into 5 s)", L.footer.x, L.footer.y + 14, { size: 11, color: C.ink3, maxW: L.footer.w });
+  },
+});
+
+function finish(p) {
+  const D = Bench.D;
+  const setup = `${p.volMl} mL of ${p.concPct}% H2O2 at ${p.tempC} °C with ${p.catalyst === "none" ? "no catalyst" : `${p.catalystG} g of ${R.c.name}`}`;
+  const outcome = R.overflow
+    ? `gave oxygen so fast the 100 mL syringe filled after ${D.fmt(R.tFull)} s`
+    : R.reached
+      ? `collected ${D.fmt(R.target)} mL of O2 after ${D.fmt(R.tTarget)} s (limit ${R.tl} s)`
+      : `collected only ${D.fmt(R.V(R.tl))} mL of O2 in ${R.tl} s (target ${D.fmt(R.target)} mL)`;
+  const reasons = [];
+  if (R.overflow) reasons.push(`the peroxide holds ${D.fmt(R.vMax)} mL of O2 in total, more than the 100 mL syringe: use less or weaker peroxide`);
+  else if (R.vMax < R.target) reasons.push(`there is only enough peroxide for ${D.fmt(R.vMax)} mL of O2 in total`);
+  else if (!R.reached) reasons.push(`too slow: k = ${D.fmt(R.k)} /s (half-life ${D.fmt(R.half)} s)${p.catalyst === "none" ? "; without a catalyst it barely reacts" : ""}${p.catalyst === "yeast" && +p.tempC > 45 ? "; above about 50 °C the catalase enzyme is denatured" : ""}`);
+  Bench.result({
+    passed: R.ok,
+    summary: `${setup} ${outcome}.`,
+    failureReason: R.ok ? undefined : reasons.join("; "),
+    score: R.ok ? Math.round(R.tl - R.tTarget) : undefined,
+    scoreLabel: "seconds to spare",
+    metrics: { k: +R.k.toPrecision(3), halfLifeS: Math.round(R.half), o2TotalMl: Math.round(R.vMax), timeToTargetS: Number.isFinite(R.tTarget) ? Math.round(R.tTarget) : -1 },
+  });
+}
+</script>
+</body>
+</html>

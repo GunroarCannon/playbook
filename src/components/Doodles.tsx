@@ -293,6 +293,51 @@ export function MagicFlask({ size = 64, ...props }: P) {
   );
 }
 
+/** Titration: burette with a stopcock dripping into a conical flask. */
+export function Burette({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <path d="M44 4 V50 H56 V4" />
+      <path d="M44 14 H50 M44 24 H52 M44 34 H50 M44 44 H52" opacity="0.6" />
+      <path d="M40 52 H60 M50 50 V60" strokeWidth="2.2" />
+      <circle cx="50" cy="66" r="1.8" fill="currentColor" />
+      <path d="M42 72 V78 L24 94 H76 L58 78 V72" />
+      <path d="M29 90 Q50 84 71 90 L74 93 H26 Z" fill="currentColor" opacity="0.35" />
+    </svg>
+  );
+}
+
+/** Reaction rate: fizzing flask feeding a gas syringe. */
+export function GasSyringe({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <path d="M18 44 V58 L6 88 Q4 94 10 94 H38 Q44 94 42 88 L30 58 V44" />
+      <path d="M10 80 H38" opacity="0.6" />
+      <circle cx="20" cy="86" r="2" />
+      <circle cx="27" cy="74" r="1.6" />
+      <circle cx="22" cy="66" r="1.2" />
+      <path d="M24 44 V26 H46" />
+      <path d="M46 18 H84 V34 H46 Z" />
+      <path d="M54 18 V22 M62 18 V24 M70 18 V22 M78 18 V24" opacity="0.6" />
+      <path d="M66 20 V32 M66 26 H96" strokeWidth="2.2" />
+    </svg>
+  );
+}
+
+/** Limiting reagent: a flask blowing up a balloon. */
+export function BalloonFlask({ size = 64, ...props }: P) {
+  return (
+    <svg {...base(size, "0 0 100 100", props)}>
+      <ellipse cx="50" cy="24" rx="18" ry="20" />
+      <path d="M44 43 L46 52 H54 L56 43" />
+      <path d="M44 52 V62 L22 92 H78 L56 62 V52" />
+      <path d="M28 84 H72" opacity="0.6" />
+      <path d="M38 88 h3 M48 89 h3 M58 88 h3" strokeWidth="2.4" />
+      <path d="M44 16 Q46 10 52 9" opacity="0.6" />
+    </svg>
+  );
+}
+
 export function Shelf({ size = 64, ...props }: P) {
   return (
     <svg {...base(size, "0 0 100 100", props)}>
@@ -460,6 +505,9 @@ export function BenchIcon({ simId, size = 28, ...props }: P & { simId: string })
       loan: Receipt,
       business: Stall,
       evacuation: Exit,
+      titration: Burette,
+      reaction: GasSyringe,
+      fizz: BalloonFlask,
     }[simId] ?? (simId.startsWith("c-") ? MagicFlask : Flask);
   return <Icon size={size} {...props} />;
 }

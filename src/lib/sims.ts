@@ -35,7 +35,7 @@ export type SimPreset = {
   params: Record<string, ParamValue>;
 };
 
-export type SimCategory = "build" | "motion" | "home" | "money" | "people";
+export type SimCategory = "build" | "motion" | "home" | "money" | "people" | "lab";
 
 export const CATEGORIES: { id: SimCategory; label: string; icon: UiIconName }[] = [
   { id: "build", label: "Build & make", icon: "hammer" },
@@ -43,6 +43,7 @@ export const CATEGORIES: { id: SimCategory; label: string; icon: UiIconName }[] 
   { id: "home", label: "Home, water & power", icon: "house" },
   { id: "money", label: "Money & business", icon: "coins" },
   { id: "people", label: "People & health", icon: "people-group" },
+  { id: "lab", label: "Chemistry & lab", icon: "flask" },
 ];
 
 export type SimDef = {
@@ -984,6 +985,137 @@ export const SIMS: SimDef[] = [
       { id: "care", label: "Care home", icon: "person-cane", note: "80 older residents, slow to react, two narrow doors.", params: { people: 80, crowd: "elderly", hallM: 25, exits: 2, exitWidthM: 1, alarmDelayS: 60, targetMin: 3 } },
       { id: "stadium", label: "Stadium stand", icon: "volleyball", note: "3,000 fans, eight 3 m gates, an 8-minute target.", params: { people: 3000, hallM: 100, exits: 8, exitWidthM: 3, targetMin: 8 } },
       { id: "wide", label: "Wider doors", icon: "door-open", note: "The Sunday service again, with double-width 2.4 m doors.", params: { exitWidthM: 2.4 } },
+    ],
+  },
+  {
+    id: "titration",
+    name: "Titration Bench",
+    tagline: "Burette, indicator, and the drop that turns it pink",
+    src: "/sims/titration.html",
+    category: "lab",
+    keywords: ["titration", "titrate", "burette", "indicator", "phenolphthalein", "methyl orange", "naoh", "sodium hydroxide", "neutralise", "neutralize", "equivalence", "end point", "ph"],
+    brief:
+      "Acid-base titration: NaOH from a 50 mL burette into acidVol mL of acid in a conical flask. pH from the full charge balance " +
+      "[H+] + [Na+] = [OH-] + [A-] (weak acids: A- = Ka*C/(Ka+[H+]); ethanoic Ka 1.8e-5, methanoic Ka 1.8e-4, HCl strong). " +
+      "Equivalence volume Veq = acidConc x acidVol / baseConc. The end point is where the indicator visibly changes " +
+      "(phenolphthalein pH 8.2-10, bromothymol blue 6.0-7.6, methyl red 4.4-6.2, methyl orange 3.1-4.4). " +
+      "A test PASSES when the end point is within tolerance mL of Veq and Veq fits in the 50 mL burette. Score = accuracy %.",
+    params: [
+      {
+        key: "acid",
+        label: "Acid in the flask",
+        control: "select",
+        default: "ethanoic",
+        options: [
+          { value: "hcl", label: "Hydrochloric (HCl)" },
+          { value: "ethanoic", label: "Ethanoic (vinegar)" },
+          { value: "methanoic", label: "Methanoic" },
+        ],
+      },
+      { key: "acidConc", label: "Acid strength", control: "dial", min: 0.01, max: 1, step: 0.01, unit: "mol/L", default: 0.1 },
+      { key: "acidVol", label: "Acid volume", control: "fader", min: 5, max: 50, step: 1, unit: "mL", default: 25 },
+      { key: "baseConc", label: "NaOH strength", control: "dial", min: 0.01, max: 1, step: 0.01, unit: "mol/L", default: 0.1 },
+      {
+        key: "indicator",
+        label: "Indicator",
+        control: "select",
+        default: "phenolphthalein",
+        options: [
+          { value: "phenolphthalein", label: "Phenolphthalein" },
+          { value: "bromothymol", label: "Bromothymol blue" },
+          { value: "methylred", label: "Methyl red" },
+          { value: "methylorange", label: "Methyl orange" },
+        ],
+      },
+      { key: "tolerance", label: "Allowed error", control: "fader", min: 0.05, max: 2, step: 0.05, unit: "mL", default: 0.5 },
+    ],
+    presets: [
+      { id: "vinegar", label: "Is my vinegar 5%?", icon: "bottle-water", note: "10 mL of household vinegar (about 0.83 mol/L ethanoic acid) against 0.5 mol/L NaOH, with phenolphthalein.", params: { acid: "ethanoic", acidConc: 0.83, acidVol: 10, baseConc: 0.5 } },
+      { id: "wrong", label: "Wrong indicator", icon: "triangle-exclamation", note: "Ethanoic acid with methyl orange: it changes colour long before the acid is used up.", params: { indicator: "methylorange" } },
+      { id: "strong", label: "Strong acid", icon: "flask", note: "HCl against NaOH: the pH leaps from 4 to 10 in one drop, so bromothymol blue lands right on it.", params: { acid: "hcl", indicator: "bromothymol" } },
+      { id: "burette", label: "Burette too small", icon: "eye-dropper", note: "25 mL of 0.5 mol/L HCl against 0.1 mol/L NaOH needs 125 mL, more than a 50 mL burette.", params: { acid: "hcl", acidConc: 0.5, baseConc: 0.1 } },
+    ],
+  },
+  {
+    id: "reaction",
+    name: "Reaction Rate Bench",
+    tagline: "Peroxide, catalysts and heat: how fast does the gas come?",
+    src: "/sims/reaction.html",
+    category: "lab",
+    keywords: ["reaction rate", "rate of reaction", "catalyst", "peroxide", "h2o2", "enzyme", "catalase", "activation energy", "arrhenius", "gas syringe", "oxygen", "manganese", "elephant toothpaste", "kinetics"],
+    brief:
+      "Hydrogen peroxide decomposing, 2H2O2 -> 2H2O + O2, with the oxygen collected in a 100 mL gas syringe. First-order kinetics: " +
+      "O2(t) = Vmax(1 - e^-kt), Vmax = (moles H2O2 / 2) x RT/P. k = k25 x grams of catalyst x exp(-Ea/R (1/T - 1/298 K)) " +
+      "(typical classroom values: none k25 2e-7/s Ea 75 kJ/mol; KI 0.004/s per g, 56 kJ/mol; MnO2 0.012/s per g, 58 kJ/mol; " +
+      "yeast catalase 0.02/s per g, 23 kJ/mol, denatures above ~50 °C). concPct is % w/v. " +
+      "A test PASSES when targetMl of O2 is collected within timeLimit seconds without overfilling the 100 mL syringe. Score = seconds to spare.",
+    params: [
+      {
+        key: "catalyst",
+        label: "Catalyst",
+        control: "select",
+        default: "mno2",
+        options: [
+          { value: "none", label: "None" },
+          { value: "ki", label: "Potassium iodide" },
+          { value: "mno2", label: "Manganese(IV) oxide" },
+          { value: "yeast", label: "Yeast (catalase)" },
+        ],
+      },
+      { key: "concPct", label: "H₂O₂ strength", control: "dial", min: 1, max: 30, step: 0.5, unit: "%", default: 3 },
+      { key: "volMl", label: "H₂O₂ volume", control: "fader", min: 2, max: 50, step: 1, unit: "mL", default: 8 },
+      { key: "tempC", label: "Temperature", control: "dial", min: 5, max: 80, step: 1, unit: "°C", default: 25 },
+      { key: "catalystG", label: "Catalyst mass", control: "fader", min: 0.1, max: 5, step: 0.1, unit: "g", default: 0.5 },
+      { key: "targetMl", label: "Target O₂", control: "fader", min: 10, max: 100, step: 5, unit: "mL", default: 50 },
+      { key: "timeLimit", label: "Time limit", control: "fader", min: 30, max: 600, step: 10, unit: "s", default: 180 },
+    ],
+    presets: [
+      { id: "yeast", label: "Yeast at 37 °C", icon: "bread-slice", note: "Half a gram of dried yeast at body temperature, where catalase works well.", params: { catalyst: "yeast", tempC: 37 } },
+      { id: "boiled", label: "Yeast at 70 °C", icon: "temperature-high", note: "The same yeast in hot water: the enzyme is cooked and almost stops.", params: { catalyst: "yeast", tempC: 70 } },
+      { id: "cold", label: "Fridge-cold", icon: "snowflake", note: "Manganese(IV) oxide at 5 °C: the same catalyst, five times slower.", params: { tempC: 5 } },
+      { id: "none", label: "No catalyst", icon: "stopwatch", note: "Peroxide on its own breaks down over days, not minutes.", params: { catalyst: "none" } },
+      { id: "ki", label: "Potassium iodide", icon: "vial", note: "1 g of KI, the 'elephant toothpaste' catalyst.", params: { catalyst: "ki", catalystG: 1 } },
+      { id: "bleach", label: "Hair-bleach strength", icon: "triangle-exclamation", note: "20 mL of 6% peroxide holds far more oxygen than the syringe can take.", params: { concPct: 6, volMl: 20 } },
+    ],
+  },
+  {
+    id: "fizz",
+    name: "Fizz Balloon Bench",
+    tagline: "Baking soda, vinegar, a balloon: which runs out first?",
+    src: "/sims/fizz.html",
+    category: "lab",
+    keywords: ["baking soda", "bicarbonate", "vinegar", "balloon", "limiting", "limiting reagent", "stoichiometry", "mole", "moles", "chalk", "magnesium", "carbon dioxide", "co2", "hydrogen", "chemistry", "volcano", "fizz"],
+    brief:
+      "A solid reacts with an acid in a flask and the gas inflates a balloon. Reactions: NaHCO3 + CH3COOH -> CH3COONa + H2O + CO2 (84.01 g/mol, 1:1), " +
+      "CaCO3 + 2HCl -> CaCl2 + H2O + CO2 (100.09 g/mol, 1:2), Mg + 2HCl -> MgCl2 + H2 (24.31 g/mol, 1:2). " +
+      "Moles of solid = solidG / M, moles of acid = acidConc x acidMl / 1000; the limiting reagent sets the gas, V = n x 24.5 L/mol (25 °C, 1 atm). " +
+      "Household vinegar is about 0.83 mol/L. A test PASSES when the gas reaches targetL, stays under burstL, and at most maxWastePct of the excess reagent is left over. " +
+      "Score = % of reagents used.",
+    params: [
+      {
+        key: "reaction",
+        label: "Reaction",
+        control: "select",
+        default: "soda",
+        options: [
+          { value: "soda", label: "Baking soda + vinegar" },
+          { value: "chalk", label: "Chalk + HCl" },
+          { value: "magnesium", label: "Magnesium + HCl" },
+        ],
+      },
+      { key: "solidG", label: "Solid", control: "dial", min: 0.5, max: 30, step: 0.5, unit: "g", default: 5 },
+      { key: "acidMl", label: "Acid volume", control: "dial", min: 10, max: 500, step: 5, unit: "mL", default: 100 },
+      { key: "acidConc", label: "Acid strength", control: "fader", min: 0.1, max: 3, step: 0.01, unit: "mol/L", default: 0.83, hint: "vinegar ≈ 0.83 mol/L" },
+      { key: "targetL", label: "Target balloon", control: "fader", min: 0.2, max: 5, step: 0.1, unit: "L", default: 1 },
+      { key: "burstL", label: "Balloon bursts at", control: "fader", min: 1, max: 8, step: 0.5, unit: "L", default: 3.5 },
+      { key: "maxWastePct", label: "Max leftover", control: "fader", min: 0, max: 100, step: 1, unit: "%", default: 25 },
+    ],
+    presets: [
+      { id: "volcano", label: "Kitchen volcano", icon: "mountain", note: "A spoonful (5 g) of baking soda into 100 mL of vinegar.", params: {} },
+      { id: "matched", label: "Matched amounts", icon: "scale-balanced", note: "7 g of baking soda matches 100 mL of vinegar mole for mole.", params: { solidG: 7 } },
+      { id: "big", label: "Too much fizz", icon: "triangle-exclamation", note: "30 g of baking soda in half a litre of vinegar.", params: { solidG: 30, acidMl: 500 } },
+      { id: "chalk", label: "Chalk in acid", icon: "school", note: "5 g of blackboard chalk (CaCO3) in 100 mL of 1 mol/L hydrochloric acid.", params: { reaction: "chalk", acidConc: 1 } },
+      { id: "magnesium", label: "Magnesium ribbon", icon: "bolt", note: "1 g of magnesium in 100 mL of 1 mol/L HCl makes hydrogen.", params: { reaction: "magnesium", solidG: 1, acidConc: 1 } },
     ],
   },
 ];
